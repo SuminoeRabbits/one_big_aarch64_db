@@ -3,12 +3,12 @@
 Generate AArch64 System Register Database from ARM XML Specifications
 
 This script parses the ARM A-profile System Register XML specifications
-(AArch64-*.xml files only) and creates a DuckDB database for tracking test coverage.
+(AArch64-*.xml files only) and creates a DuckDB database.
 
 Database Schema:
 - Column 1 (feature_name): ARM Architecture Feature (FEAT_*)
 - Column 2 (register_name): System Register Short Name (e.g., ACCDATA_EL1)
-- Additional columns: metadata and test coverage information
+- Additional columns: metadata from ARM XML specifications
 """
 
 import os
@@ -152,7 +152,7 @@ class SysRegParser:
 
 
 class SysRegDatabase:
-    """DuckDB Database for AArch64 System Register Coverage"""
+    """DuckDB Database for AArch64 System Registers"""
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -201,20 +201,6 @@ class SysRegDatabase:
         self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_register
             ON aarch64_sysreg(register_name)
-        """)
-
-        # Coverage tracking table
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS coverage_status (
-                register_id INTEGER,
-                test_suite VARCHAR,
-                test_name VARCHAR,
-                coverage_status VARCHAR CHECK(coverage_status IN ('untested', 'partial', 'full')),
-                last_tested TIMESTAMP,
-                notes VARCHAR,
-                PRIMARY KEY (register_id, test_suite, test_name),
-                FOREIGN KEY (register_id) REFERENCES aarch64_sysreg(id)
-            )
         """)
 
         # Metadata table

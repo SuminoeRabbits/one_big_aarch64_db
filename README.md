@@ -8,22 +8,22 @@
 
 ### Overview
 
-This project provides a unified database solution for tracking and managing test coverage of AArch64 architecture components. Specifically, it creates two interconnected databases using **DuckDB**:
+This project provides a unified database solution for managing AArch64 architecture components. Specifically, it creates two interconnected databases using **DuckDB**:
 
-- **`aarch64_sysreg_db.duckdb`** - System Registers (SysReg) coverage database
-- **`aarch64_isa_db.duckdb`** - Instruction Set Architecture (ISA) coverage database
+- **`aarch64_sysreg_db.duckdb`** - System Registers (SysReg) database
+- **`aarch64_isa_db.duckdb`** - Instruction Set Architecture (ISA) database
 
-These databases serve as comprehensive scoreboards for test coverage, enabling systematic tracking of which AArch64 system registers and instructions have been tested, validated, and verified across different implementations and test suites.
+These databases serve as comprehensive reference databases for AArch64 system registers and instructions, providing structured access to ARM specification data.
 
 ### Purpose
 
 The primary goals of this project are:
 
-1. **Centralized Coverage Tracking**: Maintain a single source of truth for AArch64 SysReg and ISA test coverage
-2. **Specification Compliance**: Track coverage against official ARM specifications
-3. **Quality Assurance**: Identify untested or under-tested architectural features
-4. **Historical Tracking**: Monitor test coverage evolution over time
-5. **Cross-platform Analysis**: Compare coverage across different implementations and platforms
+1. **Centralized Reference Database**: Maintain a single source of truth for AArch64 SysReg and ISA specifications
+2. **Specification Compliance**: Structure data based on official ARM specifications
+3. **Feature Mapping**: Track which features (FEAT_*) are associated with each register and instruction
+4. **Easy Querying**: Enable SQL-based queries for analyzing ARM architecture components
+5. **Cross-platform Analysis**: Provide structured data for architecture analysis and validation
 
 ### Source Specifications
 
@@ -206,19 +206,6 @@ feature_name          | register_name
 ----------------------|---------------
 FEAT_LS64_ACCDATA    | ACCDATA_EL1
 ```
-
-### Coverage Tracking Table: `coverage_status`
-
-Tracks test coverage for each register:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `register_id` | INTEGER | Foreign key to aarch64_sysreg.id |
-| `test_suite` | VARCHAR | Test suite name |
-| `test_name` | VARCHAR | Specific test name |
-| `coverage_status` | VARCHAR | Status: 'untested', 'partial', 'full' |
-| `last_tested` | TIMESTAMP | Last test execution time |
-| `notes` | VARCHAR | Additional notes |
 
 ### Metadata Table: `metadata`
 
