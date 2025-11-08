@@ -1,6 +1,9 @@
 # One Big AArch64 Database
 
-> A comprehensive test coverage tracking system for AArch64 System Registers and Instructions
+> A comprehensive reference database for AArch64 System Registers and Instructions
+
+**Release**: 2025.11
+**Specification Version**: ARM A-Profile 2025-09 (ASL1)
 
 ---
 
@@ -267,11 +270,76 @@ if not features:
 
 ## Usage Examples
 
+### Generate Database with Docker
+
+You can generate the database using Docker without installing Python or DuckDB locally (works on Windows, macOS, and Linux).
+
+**Prerequisites:**
+- Download and extract source specifications as described in [Step 1: Download and Extract Source Specifications](#step-1-download-and-extract-source-specifications)
+- The source files (`source_202509/`) will be shared with the Docker container via volume mount
+
+```bash
+# Pull Python 3 Docker image
+docker pull python:3.11-slim
+
+# Run the database generation script inside Docker
+# The current directory is mounted to /workspace in the container
+docker run --rm -v $(pwd):/workspace -w /workspace python:3.11-slim bash -c "
+  pip install --quiet duckdb pandas openpyxl lxml &&
+  python gen_aarch64_sysreg_db.py
+"
+
+# For Windows PowerShell, use:
+docker run --rm -v ${PWD}:/workspace -w /workspace python:3.11-slim bash -c "pip install --quiet duckdb pandas openpyxl lxml && python gen_aarch64_sysreg_db.py"
+
+# For Windows CMD, use:
+docker run --rm -v %cd%:/workspace -w /workspace python:3.11-slim bash -c "pip install --quiet duckdb pandas openpyxl lxml && python gen_aarch64_sysreg_db.py"
+```
+
+**How it works:**
+- `-v $(pwd):/workspace` mounts your current directory (containing `source_202509/`, `gen_aarch64_sysreg_db.py`) to `/workspace` inside the Docker container
+- The script reads XML files from the shared `source_202509/` directory
+- Generated database files are written back to your host directory
+
+**This will create:**
+- `aarch64_sysreg_db.duckdb` - The DuckDB database file
+- `aarch64_sysreg_db.xlsx` - Excel export of the database
+
+### Using DuckDB CLI with Docker
+
+If you don't have DuckDB CLI installed locally, you can use Docker to interact with the database:
+
+```bash
+# Pull official DuckDB Docker image
+docker pull duckdb/duckdb:latest
+
+# Interactive SQL shell
+docker run -it --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duckdb
+
+# Run a single query
+docker run --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duckdb \
+  -c "SELECT COUNT(*) as total_rows FROM aarch64_sysreg"
+
+# Export to Excel using Docker
+docker run --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duckdb \
+  -c "COPY (SELECT * FROM aarch64_sysreg) TO '/data/aarch64_sysreg_db.xlsx' WITH (FORMAT GDAL, DRIVER 'XLSX')"
+```
+
 ### Export Database to Excel
 
 ```bash
-# Export to Excel format for easy viewing
+# Using local DuckDB CLI
 duckdb aarch64_sysreg_db.duckdb -c "COPY (SELECT * FROM aarch64_sysreg) TO 'aarch64_sysreg_db.xlsx' WITH (FORMAT GDAL, DRIVER 'XLSX')"
+
+# Or using Python (no DuckDB CLI required)
+python3 -c "
+import duckdb
+import pandas as pd
+conn = duckdb.connect('aarch64_sysreg_db.duckdb')
+df = conn.execute('SELECT * FROM aarch64_sysreg').df()
+df.to_excel('aarch64_sysreg_db.xlsx', index=False, engine='openpyxl')
+conn.close()
+"
 ```
 
 ### Query Examples
@@ -296,14 +364,28 @@ SELECT feature_name FROM aarch64_sysreg
 WHERE register_name = 'ACCDATA_EL1';
 ```
 
-## Contributing
+## Release Information
 
-_(To be documented)_
+### Version 2025.11
+
+**Release Date**: November 2025
+
+**What's Included:**
+- AArch64 System Register Database (`aarch64_sysreg_db.duckdb`)
+- 684 feature-register mappings
+- 90 unique ARM architecture features (FEAT_*)
+- 646 unique system registers
+- Excel export (`aarch64_sysreg_db.xlsx`)
+- Database generation script (`gen_aarch64_sysreg_db.py`)
+
+**Specification Source:**
+- ARM A-Profile Architecture 2025-09 (ASL1 format)
+- SysReg XML specifications
 
 ---
 
 <div align="center">
 
-**Project Status**: 🚧 Under Development
+**Release Version**: 2025.11 | **Specification**: ARM 2025-09
 
 </div>
