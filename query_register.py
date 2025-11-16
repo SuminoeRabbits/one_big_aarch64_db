@@ -15,6 +15,12 @@ import re
 from pathlib import Path
 import duckdb
 
+# Check Python version (requires Python 3.9 or higher)
+if sys.version_info < (3, 9):
+    print("ERROR: This script requires Python 3.9 or higher.")
+    print(f"Current version: Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    sys.exit(1)
+
 # Database file
 DB_FILE = Path(__file__).parent / "aarch64_sysreg_db.duckdb"
 
@@ -86,7 +92,7 @@ class RegisterQueryAgent:
                 field_msb,
                 field_lsb,
                 field_width,
-                field_position,
+                "field_position",
                 field_description
             FROM aarch64_sysreg_fields
             WHERE register_name = ?
@@ -134,7 +140,7 @@ class RegisterQueryAgent:
                 field_msb,
                 field_lsb,
                 field_width,
-                field_position,
+                "field_position",
                 field_description
             FROM aarch64_sysreg_fields
             WHERE register_name = ?
@@ -197,7 +203,7 @@ class RegisterQueryAgent:
                 field_msb,
                 field_lsb,
                 field_width,
-                field_position,
+                "field_position",
                 field_description
             FROM aarch64_sysreg_fields
             WHERE register_name = ?

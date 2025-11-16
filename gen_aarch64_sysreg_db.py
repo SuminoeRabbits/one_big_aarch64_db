@@ -19,6 +19,12 @@ import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set
 import duckdb
 
+# Check Python version (requires Python 3.9 or higher)
+if sys.version_info < (3, 9):
+    print("ERROR: This script requires Python 3.9 or higher.")
+    print(f"Current version: Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    sys.exit(1)
+
 # Define PROJECT_DIR: the directory containing system register XML files
 PROJECT_DIR = Path(os.getcwd()) / "source_202509" / "SysReg_xml_A_profile-2025-09_ASL1"
 
@@ -316,7 +322,7 @@ class SysRegDatabase:
                 field_msb INTEGER NOT NULL,
                 field_lsb INTEGER NOT NULL,
                 field_width INTEGER NOT NULL,
-                field_position VARCHAR NOT NULL,
+                "field_position" VARCHAR NOT NULL,
                 field_description VARCHAR,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -437,7 +443,7 @@ class SysRegDatabase:
                 self.conn.execute("""
                     INSERT INTO aarch64_sysreg_fields (
                         register_name, field_name, field_msb, field_lsb,
-                        field_width, field_position, field_description
+                        field_width, "field_position", field_description
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, [
                     register_name,

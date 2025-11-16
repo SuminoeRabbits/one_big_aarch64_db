@@ -11,6 +11,12 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
+# Check Python version (requires Python 3.9 or higher)
+if sys.version_info < (3, 9):
+    print("ERROR: This script requires Python 3.9 or higher.")
+    print(f"Current version: Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    sys.exit(1)
+
 # Database file
 DB_FILE = Path(__file__).parent / "aarch64_sysreg_db.duckdb"
 EXCEL_FILE = Path(__file__).parent / "aarch64_sysreg_db.xlsx"
@@ -67,7 +73,7 @@ def export_to_excel():
                 f.field_msb,
                 f.field_lsb,
                 f.field_width,
-                f.field_position
+                f."field_position"
             FROM aarch64_sysreg r
             LEFT JOIN aarch64_sysreg_fields f ON r.register_name = f.register_name
             ORDER BY r.register_name, f.field_msb DESC
