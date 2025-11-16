@@ -94,9 +94,12 @@ class SysRegParser:
         # Extract architecture features (FEAT_* conditions) - PRIMARY EXTRACTION
         reg_data['features'] = self._extract_features()
 
-        # Extract field information count
+        # Extract field information count and details
         fields = self.root.findall('.//field[@id]')
         reg_data['field_count'] = len(fields)
+
+        # Extract detailed field information (for separate fields table)
+        reg_data['fields'] = self._extract_field_info()
 
         # Extract access types
         access_types = set()
@@ -106,6 +109,57 @@ class SysRegParser:
         reg_data['access_types'] = ','.join(sorted(access_types)) if access_types else None
 
         return reg_data
+
+    def _extract_field_info(self) -> List[Dict]:
+        """
+        Extract field names and bit positions from the register XML.
+        Returns a list of field dictionaries sorted by MSB (most significant bit) in descending order.
+
+        Example output:
+        [
+            {'name': 'RES0', 'msb': 63, 'lsb': 14, 'width': 50, 'position': '[63:14]'},
+            {'name': 'ALLINT', 'msb': 13, 'lsb': 13, 'width': 1, 'position': '[13:13]'},
+            {'name': 'RES0', 'msb': 12, 'lsb': 0, 'width': 13, 'position': '[12:0]'}
+        ]
+        """
+        fields_list = []
+
+        # Find all field elements with id attribute
+        for field in self.root.findall('.//field[@id]'):
+            field_name_elem = field.find('field_name')
+            field_msb_elem = field.find('field_msb')
+            field_lsb_elem = field.find('field_lsb')
+
+            # Get field name - use rwtype if field_name is not available (for reserved fields)
+            if field_name_elem is not None and field_name_elem.text:
+                field_name = field_name_elem.text.strip()
+            else:
+                # For reserved fields, use rwtype (e.g., RES0, RES1)
+                rwtype = field.get('rwtype', 'UNKNOWN')
+                field_name = rwtype
+
+            # Get bit positions
+            if field_msb_elem is not None and field_lsb_elem is not None:
+                try:
+                    msb = int(field_msb_elem.text.strip())
+                    lsb = int(field_lsb_elem.text.strip())
+                    width = msb - lsb + 1
+
+                    fields_list.append({
+                        'name': field_name,
+                        'msb': msb,
+                        'lsb': lsb,
+                        'width': width,
+                        'position': f'[{msb}:{lsb}]'
+                    })
+                except (ValueError, AttributeError):
+                    # Skip fields with invalid bit positions
+                    pass
+
+        # Sort by MSB in descending order (highest bit first)
+        fields_list.sort(key=lambda x: x['msb'], reverse=True)
+
+        return fields_list
 
     def _extract_features(self) -> Set[str]:
         """
@@ -203,6 +257,35 @@ class SysRegDatabase:
             ON aarch64_sysreg(register_name)
         """)
 
+        # Fields table - detailed bit-field information
+        self.conn.execute("""
+            CREATE SEQUENCE IF NOT EXISTS aarch64_sysreg_fields_id_seq START 1
+        """)
+
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS aarch64_sysreg_fields (
+                id INTEGER PRIMARY KEY DEFAULT nextval('aarch64_sysreg_fields_id_seq'),
+                register_name VARCHAR NOT NULL,
+                field_name VARCHAR NOT NULL,
+                field_msb INTEGER NOT NULL,
+                field_lsb INTEGER NOT NULL,
+                field_width INTEGER NOT NULL,
+                field_position VARCHAR NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Create index for faster field queries
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fields_register
+            ON aarch64_sysreg_fields(register_name)
+        """)
+
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_fields_name
+            ON aarch64_sysreg_fields(field_name)
+        """)
+
         # Metadata table
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS metadata (
@@ -277,6 +360,52 @@ class SysRegDatabase:
 
         return inserted_ids
 
+    def clear_fields_for_register(self, register_name: str):
+        """Clear all existing fields for a register before inserting new ones"""
+        self.conn.execute("""
+            DELETE FROM aarch64_sysreg_fields
+            WHERE register_name = ?
+        """, [register_name])
+
+    def insert_fields(self, register_name: str, fields: List[Dict]) -> int:
+        """
+        Insert field information for a register into the fields table.
+        Clears any existing fields for the register first to avoid duplicates.
+
+        Args:
+            register_name: The register name
+            fields: List of field dictionaries with 'name', 'msb', 'lsb', 'width', 'position'
+
+        Returns: Number of fields inserted
+        """
+        if not fields:
+            return 0
+
+        # Clear existing fields for this register to avoid duplicates
+        self.clear_fields_for_register(register_name)
+
+        inserted_count = 0
+        for field in fields:
+            try:
+                self.conn.execute("""
+                    INSERT INTO aarch64_sysreg_fields (
+                        register_name, field_name, field_msb, field_lsb,
+                        field_width, field_position
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, [
+                    register_name,
+                    field['name'],
+                    field['msb'],
+                    field['lsb'],
+                    field['width'],
+                    field['position']
+                ])
+                inserted_count += 1
+            except Exception as e:
+                print(f"    WARNING: Could not insert field {field['name']} for {register_name} - {e}")
+
+        return inserted_count
+
     def set_metadata(self, key: str, value: str):
         """Set metadata value"""
         self.conn.execute("""
@@ -332,6 +461,8 @@ def main():
     skip_count = 0
     error_count = 0
     total_rows = 0
+    total_fields = 0
+    processed_registers = set()  # Track unique registers for field insertion
 
     for i, xml_file in enumerate(xml_files, 1):
         try:
@@ -342,6 +473,15 @@ def main():
                 inserted_ids = db.insert_register(reg_data)
                 success_count += 1
                 total_rows += len(inserted_ids)
+
+                # Insert fields only once per unique register (not per feature)
+                register_name = reg_data['register_name']
+                if register_name not in processed_registers:
+                    fields = reg_data.get('fields', [])
+                    if fields:
+                        field_count = db.insert_fields(register_name, fields)
+                        total_fields += field_count
+                    processed_registers.add(register_name)
 
                 # Show progress for first few and every 100
                 if success_count <= 5 or success_count % 100 == 0:
@@ -360,7 +500,8 @@ def main():
     print("Summary:")
     print(f"  Total AArch64 XML files:  {len(xml_files)}")
     print(f"  Registers processed:      {success_count}")
-    print(f"  Database rows created:    {total_rows}")
+    print(f"  Register rows created:    {total_rows}")
+    print(f"  Field rows created:       {total_fields}")
     print(f"  Files skipped:            {skip_count}")
     print(f"  Errors:                   {error_count}")
     print("=" * 80)
@@ -382,6 +523,13 @@ def main():
         FROM aarch64_sysreg
     """).fetchone()
     print(f"  Unique registers:         {result[0]}")
+
+    # Count total fields
+    result = db.conn.execute("""
+        SELECT COUNT(*) as total_fields
+        FROM aarch64_sysreg_fields
+    """).fetchone()
+    print(f"  Total fields:             {result[0]}")
 
     # Top 5 features by register count
     print()

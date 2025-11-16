@@ -212,9 +212,41 @@ The primary table structure follows a feature-centric design:
 
 **Example:**
 ```
-feature_name          | register_name
-----------------------|---------------
-FEAT_LS64_ACCDATA    | ACCDATA_EL1
+feature_name          | register_name  | field_count
+----------------------|----------------|-------------
+FEAT_LS64_ACCDATA    | ACCDATA_EL1    | 2
+FEAT_NMI             | ALLINT         | 3
+```
+
+### Field Details Table: `aarch64_sysreg_fields`
+
+This table stores detailed bit-field information for each register. One row per field within a register.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Primary key (auto-increment) |
+| `register_name` | VARCHAR | System Register short name (foreign key to aarch64_sysreg) |
+| `field_name` | VARCHAR | Field name (e.g., ALLINT, RES0, ACCDATA) |
+| `field_msb` | INTEGER | Most significant bit position (0-127) |
+| `field_lsb` | INTEGER | Least significant bit position (0-127) |
+| `field_width` | INTEGER | Field width in bits (msb - lsb + 1) |
+| `field_position` | VARCHAR | Bit position in [msb:lsb] format |
+| `created_at` | TIMESTAMP | Record creation timestamp |
+
+**Key Design Principles:**
+1. **One row per field**: Each bitfield in a register gets its own row
+2. **64-bit mapping**: All fields map to positions within a 64-bit (or 32-bit) register space
+3. **MSB ordering**: Fields are naturally ordered by MSB position (descending)
+
+**Example:**
+```
+register_name | field_name | field_msb | field_lsb | field_width | field_position
+--------------|------------|-----------|-----------|-------------|---------------
+ALLINT        | RES0       | 63        | 14        | 50          | [63:14]
+ALLINT        | ALLINT     | 13        | 13        | 1           | [13:13]
+ALLINT        | RES0       | 12        | 0         | 13          | [12:0]
+ACCDATA_EL1   | RES0       | 63        | 32        | 32          | [63:32]
+ACCDATA_EL1   | ACCDATA    | 31        | 0         | 32          | [31:0]
 ```
 
 ### Metadata Table: `metadata`
@@ -335,21 +367,18 @@ docker run --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duc
 ### Export Database to Excel
 
 ```bash
-# Using local DuckDB CLI
-duckdb aarch64_sysreg_db.duckdb -c "COPY (SELECT * FROM aarch64_sysreg) TO 'aarch64_sysreg_db.xlsx' WITH (FORMAT GDAL, DRIVER 'XLSX')"
-
-# Or using Python (no DuckDB CLI required)
-python3 -c "
-import duckdb
-import pandas as pd
-conn = duckdb.connect('aarch64_sysreg_db.duckdb')
-df = conn.execute('SELECT * FROM aarch64_sysreg').df()
-df.to_excel('aarch64_sysreg_db.xlsx', index=False, engine='openpyxl')
-conn.close()
-"
+# Run the export script to create Excel file with multiple sheets
+python3 export_to_excel.py
 ```
 
+This creates `aarch64_sysreg_db.xlsx` with 3 sheets:
+- **`registers`** - Main register table (684 feature-register mappings)
+- **`fields`** - Field details table (7,967 bit-field definitions)
+- **`registers_with_fields`** - Joined view for easy analysis
+
 ### Query Examples
+
+#### Register Queries
 
 ```sql
 -- Count all feature-register pairs
@@ -369,6 +398,62 @@ ORDER BY register_count DESC;
 -- Find all features required by a specific register
 SELECT feature_name FROM aarch64_sysreg
 WHERE register_name = 'ACCDATA_EL1';
+```
+
+#### Field Queries
+
+```sql
+-- View all fields for a specific register
+SELECT
+    field_name,
+    field_position,
+    field_width
+FROM aarch64_sysreg_fields
+WHERE register_name = 'ALLINT'
+ORDER BY field_msb DESC;
+
+-- Find all registers with a specific field name
+SELECT DISTINCT register_name
+FROM aarch64_sysreg_fields
+WHERE field_name = 'RES0'
+ORDER BY register_name;
+
+-- Count fields per register
+SELECT
+    register_name,
+    COUNT(*) as field_count
+FROM aarch64_sysreg_fields
+GROUP BY register_name
+ORDER BY field_count DESC
+LIMIT 10;
+
+-- Join registers and fields for complete view
+SELECT
+    r.feature_name,
+    r.register_name,
+    r.long_name,
+    f.field_name,
+    f.field_position,
+    f.field_width
+FROM aarch64_sysreg r
+JOIN aarch64_sysreg_fields f ON r.register_name = f.register_name
+WHERE r.register_name = 'ALLINT'
+ORDER BY f.field_msb DESC;
+
+-- Find registers with specific bit field at a position
+SELECT DISTINCT register_name
+FROM aarch64_sysreg_fields
+WHERE field_msb >= 13 AND field_lsb <= 13
+ORDER BY register_name;
+
+-- Most common field names
+SELECT
+    field_name,
+    COUNT(*) as occurrence_count
+FROM aarch64_sysreg_fields
+GROUP BY field_name
+ORDER BY occurrence_count DESC
+LIMIT 20;
 ```
 
 ## Release Information
