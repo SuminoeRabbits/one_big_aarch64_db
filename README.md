@@ -132,6 +132,125 @@ Parsing AArch64 XML files and populating database...
 
 ### Querying the Database
 
+#### Using Query Agent (Recommended)
+
+The `query_register.py` script provides a convenient command-line interface to query registers and fields:
+
+```bash
+# Query a specific bit position
+python3 query_register.py 'HCR_EL2[1]'
+
+# Query a bit range
+python3 query_register.py 'HCR_EL2[31:8]'
+
+# Query by register and field name
+python3 query_register.py 'HCR_EL2.TGE'
+
+# Query by register and field name with bit range verification
+python3 query_register.py 'TRCIDR12.NUMCONDKEY[31:0]'
+
+# Query entire register information
+python3 query_register.py 'ACCDATA_EL1'
+
+# Query field across all registers (finds all registers containing this field)
+python3 query_register.py 'NUMCONDKEY'
+python3 query_register.py 'AES'
+python3 query_register.py 'TGE'
+
+# Query all fields with specific field definition
+python3 query_register.py 'RES0'
+python3 query_register.py 'RES1'
+python3 query_register.py 'UNPREDICTABLE'
+```
+
+**Supported Query Formats:**
+- `REGISTER_NAME[bit]` - Query specific bit position (e.g., `HCR_EL2[1]`)
+- `REGISTER_NAME[high:low]` - Query bit range (e.g., `HCR_EL2[31:8]`)
+- `REGISTER_NAME.FIELD` - Query by field name (e.g., `HCR_EL2.TGE`)
+- `REGISTER_NAME.FIELD[range]` - Query with field verification (e.g., `TRCIDR12.NUMCONDKEY[31:0]`)
+- `REGISTER_NAME` - Query entire register (e.g., `ALLINT`)
+- `FIELD_NAME` - Search field across all registers (e.g., `NUMCONDKEY`, `AES`)
+- `FIELD_DEFINITION` - Query all fields by definition (e.g., `RES0`, `RES1`, `UNPREDICTABLE`, `UNDEFINED`, `RAO`, `UNKNOWN`)
+
+**Example Outputs:**
+
+```bash
+# Single bit query
+$ python3 query_register.py 'HCR_EL2[1]'
+================================================================================
+Register: HCR_EL2
+Bit Position: [1]
+================================================================================
+
+Long Name:      Hypervisor Configuration Register
+Register Width: 64 bits
+Features:       FEAT_AA64
+
+Field Name:     SWIO
+Field Position: [1:1]
+Field Width:    1 bits
+Field Definition: RES1
+
+Description:
+  Set/Way Invalidation Override. Causes EL1 execution of the data cache
+  invalidate by set/way instructions to perform a data cache clean and
+  invalidate by set/way...
+
+Explanation:
+  Bit 1 belongs to the 'SWIO' field,
+  which spans bits [1:1] (1 bits total).
+```
+
+```bash
+# Field name query across all registers
+$ python3 query_register.py 'TGE'
+================================================================================
+Field Name: TGE
+Found in 4 register(s)
+================================================================================
+
+[1] Register: HCRMASK_EL2
+    Long Name:      Hypervisor Configuration Masking Register
+    Register Width: 64 bits
+    Features:       FEAT_SRMASK2
+
+    Field Position: [27:27]
+    Field Width:    1 bits
+
+    Description:
+      Mask bit for TGE.
+
+--------------------------------------------------------------------------------
+
+[2] Register: HCR_EL2
+    Long Name:      Hypervisor Configuration Register
+    Register Width: 64 bits
+    Features:       FEAT_AA64
+
+    Field Position: [27:27]
+    Field Width:    1 bits
+
+    Description:
+      Trap General Exceptions, from EL0. HCR_EL2.TGE must not be cached in a TLB.
+
+[... more registers ...]
+```
+
+```bash
+# Field definition query
+$ python3 query_register.py 'RES0' | head -10
+ACCDATA_EL1.RES0[63:32]
+ALLINT.RES0[63:14]
+ALLINT.RES0[12:0]
+AMCFGR_EL0.RES0[63:32]
+AMCFGR_EL0.RES0[27:25]
+AMCG1IDR_EL0.RES0[63:16]
+AMCNTENCLR0_EL0.RES0[63:16]
+AMCNTENCLR1_EL0.RES0[63:16]
+AMCNTENSET0_EL0.RES0[63:16]
+AMCNTENSET1_EL0.RES0[63:16]
+```
+
 #### Using DuckDB CLI
 
 ```bash
@@ -232,6 +351,7 @@ This table stores detailed bit-field information for each register. One row per 
 | `field_width` | INTEGER | Field width in bits (msb - lsb + 1) |
 | `field_position` | VARCHAR | Bit position in [msb:lsb] format |
 | `field_description` | VARCHAR | Description of the field's purpose and behavior |
+| `field_definition` | VARCHAR | Field definition (RES0, RES1, RAO, WI, UNKNOWN, UNDEFINED, UNPREDICTABLE), or NULL if not applicable |
 | `created_at` | TIMESTAMP | Record creation timestamp |
 
 **Key Design Principles:**
@@ -239,16 +359,19 @@ This table stores detailed bit-field information for each register. One row per 
 2. **64-bit mapping**: All fields map to positions within a 64-bit (or 32-bit) register space
 3. **MSB ordering**: Fields are naturally ordered by MSB position (descending)
 4. **Field descriptions**: Extracted from `<field_description>` elements in ARM XML specifications
+5. **Field definitions**: Extracted from field attributes (`rwtype`, `reserved_type`) and `<arm-defined-word>` tags
+   - Common values: RES0 (Reserved, must be 0), RES1 (Reserved, must be 1), RAO (Read-As-One), WI (Write Ignored), UNKNOWN, UNDEFINED, UNPREDICTABLE
+   - NULL if the field has no special definition (i.e., it's a normal functional field)
 
 **Example:**
 ```
-register_name | field_name | field_msb | field_lsb | field_width | field_position | field_description
---------------|------------|-----------|-----------|-------------|----------------|------------------
-ALLINT        | RES0       | 63        | 14        | 50          | [63:14]        | Reserved, RES0.
-ALLINT        | ALLINT     | 13        | 13        | 1           | [13:13]        | All interrupt mask...
-ALLINT        | RES0       | 12        | 0         | 13          | [12:0]         | Reserved, RES0.
-ACCDATA_EL1   | RES0       | 63        | 32        | 32          | [63:32]        | Reserved, RES0.
-ACCDATA_EL1   | ACCDATA    | 31        | 0         | 32          | [31:0]         | Accumulation data...
+register_name | field_name | field_msb | field_lsb | field_width | field_position | field_description         | field_definition
+--------------|------------|-----------|-----------|-------------|----------------|---------------------------|------------------
+ALLINT        | RES0       | 63        | 14        | 50          | [63:14]        | Reserved, RES0.           | RES0
+ALLINT        | ALLINT     | 13        | 13        | 1           | [13:13]        | All interrupt mask...     | NULL
+ALLINT        | RES0       | 12        | 0         | 13          | [12:0]         | Reserved, RES0.           | RES0
+ACCDATA_EL1   | RES0       | 63        | 32        | 32          | [63:32]        | Reserved, RES0.           | RES0
+ACCDATA_EL1   | ACCDATA    | 31        | 0         | 32          | [31:0]         | Accumulation data...      | NULL
 ```
 
 ### Metadata Table: `metadata`
@@ -389,21 +512,34 @@ python3 query_register.py 'HCR_EL2[1]'
 # Query a bit range (can span multiple fields)
 python3 query_register.py 'HCR_EL2[31:8]'
 
+# Query by register and field name
+python3 query_register.py 'HCR_EL2.TGE'
+
+# Query by register and field name with bit range verification
+python3 query_register.py 'TRCIDR12.NUMCONDKEY[31:0]'
+
 # Query all information about a register
 python3 query_register.py 'ALLINT'
 
-# Query another bit field
-python3 query_register.py 'ACCDATA_EL1[31]'
+# Query field across all registers
+python3 query_register.py 'NUMCONDKEY'
+python3 query_register.py 'AES'
+python3 query_register.py 'TGE'
 
-# Query by field name (NEW!)
-python3 query_register.py 'HCR_EL2.TGE'
+# Query all fields with specific field definition
+python3 query_register.py 'RES0'
+python3 query_register.py 'RES1'
+python3 query_register.py 'UNPREDICTABLE'
 ```
 
 **Supported query formats:**
 - `REGISTER_NAME[bit]` - Query a single bit position (e.g., `HCR_EL2[1]`)
 - `REGISTER_NAME[high:low]` - Query a bit range (e.g., `HCR_EL2[31:8]`)
 - `REGISTER_NAME.FIELD` - Query by field name (e.g., `HCR_EL2.TGE`)
+- `REGISTER_NAME.FIELD[range]` - Query with field verification (e.g., `TRCIDR12.NUMCONDKEY[31:0]`)
 - `REGISTER_NAME` - Query entire register information (e.g., `ALLINT`)
+- `FIELD_NAME` - Search field across all registers (e.g., `NUMCONDKEY`, `AES`, `TGE`)
+- `FIELD_DEFINITION` - Query all fields by definition (e.g., `RES0`, `RES1`, `UNPREDICTABLE`, `UNDEFINED`, `RAO`, `UNKNOWN`)
 
 **Example output for `HCR_EL2[1]`:**
 ```
@@ -419,6 +555,7 @@ Features:       FEAT_AA64
 Field Name:     SWIO
 Field Position: [1:1]
 Field Width:    1 bits
+Field Definition: NULL
 
 Description:
   Set/Way Invalidation Override. Causes EL1 execution of the data cache
@@ -467,6 +604,7 @@ Features:       FEAT_AA64
 Field Name:     TGE
 Field Position: [27:27]
 Field Width:    1 bits
+Field Definition: NULL
 
 Description:
   Trap General Exceptions, from EL0. HCR_EL2.TGE must not be cached in a TLB.
@@ -491,11 +629,11 @@ Purpose:
 
 Bit Field Layout:
 
-Bit Position    Field Name                     Width
--------------------------------------------------------
-[63:14]         RES0                            50 bits
-[13:13]         ALLINT                           1 bits
-[12:0]          RES0                            13 bits
+Bit Position    Field Name                     Width       Definition
+------------------------------------------------------------------------
+[63:14]         RES0                            50 bits     RES0
+[13:13]         ALLINT                           1 bits     NULL
+[12:0]          RES0                            13 bits     RES0
 ```
 
 ### Query Examples
@@ -525,12 +663,13 @@ WHERE register_name = 'ACCDATA_EL1';
 #### Field Queries
 
 ```sql
--- View all fields for a specific register (with descriptions)
+-- View all fields for a specific register (with descriptions and definitions)
 SELECT
     field_name,
     field_position,
     field_width,
-    field_description
+    field_description,
+    field_definition
 FROM aarch64_sysreg_fields
 WHERE register_name = 'ALLINT'
 ORDER BY field_msb DESC;
@@ -550,7 +689,7 @@ GROUP BY register_name
 ORDER BY field_count DESC
 LIMIT 10;
 
--- Join registers and fields for complete view (with descriptions)
+-- Join registers and fields for complete view (with descriptions and definitions)
 SELECT
     r.feature_name,
     r.register_name,
@@ -558,7 +697,8 @@ SELECT
     f.field_name,
     f.field_position,
     f.field_width,
-    f.field_description
+    f.field_description,
+    f.field_definition
 FROM aarch64_sysreg r
 JOIN aarch64_sysreg_fields f ON r.register_name = f.register_name
 WHERE r.register_name = 'ALLINT'
@@ -578,6 +718,24 @@ FROM aarch64_sysreg_fields
 GROUP BY field_name
 ORDER BY occurrence_count DESC
 LIMIT 20;
+
+-- Find all RES0 (Reserved, must be zero) fields
+SELECT
+    register_name,
+    field_name,
+    field_position,
+    field_width
+FROM aarch64_sysreg_fields
+WHERE field_definition = 'RES0'
+ORDER BY register_name, field_msb DESC;
+
+-- Count field definitions across all registers
+SELECT
+    field_definition,
+    COUNT(*) as count
+FROM aarch64_sysreg_fields
+GROUP BY field_definition
+ORDER BY count DESC;
 ```
 
 ## Release Information

@@ -9,6 +9,8 @@ Examples:
     python3 query_register.py "HCR_EL2[31:8]"   # Query bit range
     python3 query_register.py "HCR_EL2.TGE"     # Query by field name
     python3 query_register.py "ACCDATA_EL1"     # Query entire register
+    python3 query_register.py "RES0"            # Query all RES0 fields
+    python3 query_register.py "NUMCONDKEY"      # Query field across all registers
 """
 
 import sys
@@ -42,14 +44,60 @@ class RegisterQueryAgent:
         Parse user query to extract register name and optional bit position/range/field name.
 
         Examples:
-            "HCR_EL2[1]" -> {'register': 'HCR_EL2', 'bit_start': 1, 'bit_end': 1, 'field_name': None}
-            "HCR_EL2[31:8]" -> {'register': 'HCR_EL2', 'bit_start': 8, 'bit_end': 31, 'field_name': None}
-            "ACCDATA_EL1" -> {'register': 'ACCDATA_EL1', 'bit_start': None, 'bit_end': None, 'field_name': None}
-            "HCR_EL2.TGE" -> {'register': 'HCR_EL2', 'bit_start': None, 'bit_end': None, 'field_name': 'TGE'}
+            "HCR_EL2[1]" -> {'register': 'HCR_EL2', 'bit_start': 1, 'bit_end': 1, 'field_name': None, 'verify_field': None, 'field_definition': None, 'field_only': False}
+            "HCR_EL2[31:8]" -> {'register': 'HCR_EL2', 'bit_start': 8, 'bit_end': 31, 'field_name': None, 'verify_field': None, 'field_definition': None, 'field_only': False}
+            "ACCDATA_EL1" -> {'register': 'ACCDATA_EL1', 'bit_start': None, 'bit_end': None, 'field_name': None, 'verify_field': None, 'field_definition': None, 'field_only': False}
+            "HCR_EL2.TGE" -> {'register': 'HCR_EL2', 'bit_start': None, 'bit_end': None, 'field_name': 'TGE', 'verify_field': None, 'field_definition': None, 'field_only': False}
+            "RES0" -> {'register': None, 'bit_start': None, 'bit_end': None, 'field_name': None, 'verify_field': None, 'field_definition': 'RES0', 'field_only': False}
+            "TRCIDR12.NUMCONDKEY[31:0]" -> {'register': 'TRCIDR12', 'bit_start': 0, 'bit_end': 31, 'field_name': None, 'verify_field': 'NUMCONDKEY', 'field_definition': None, 'field_only': False}
+            "NUMCONDKEY" -> {'register': None, 'bit_start': None, 'bit_end': None, 'field_name': 'NUMCONDKEY', 'verify_field': None, 'field_definition': None, 'field_only': True}
         """
         query = query.strip()
 
-        # Pattern 1: REGISTER.FIELD_NAME format
+        # Pattern 0: Field Definition query (RES0, RES1, UNPREDICTABLE, UNDEFINED, RAO, UNKNOWN)
+        allowed_definitions = {'RES0', 'RES1', 'UNPREDICTABLE', 'UNDEFINED', 'RAO', 'UNKNOWN'}
+        if query in allowed_definitions:
+            return {
+                'register': None,
+                'bit_start': None,
+                'bit_end': None,
+                'field_name': None,
+                'verify_field': None,
+                'field_definition': query,
+                'field_only': False
+            }
+
+        # Pattern 1: REGISTER.FIELD_NAME[bit_position] or REGISTER.FIELD_NAME[bit_high:bit_low]
+        # This pattern should be checked before the simple dot pattern
+        dot_bracket_pattern = r'^([A-Z0-9_<>]+)\.([A-Z0-9_]+)\[(\d+)(?::(\d+))?\]$'
+        dot_bracket_match = re.match(dot_bracket_pattern, query)
+
+        if dot_bracket_match:
+            register_name = dot_bracket_match.group(1)
+            field_name = dot_bracket_match.group(2)
+
+            if dot_bracket_match.group(4):
+                # Range format: REGISTER.FIELD[high:low]
+                bit_high = int(dot_bracket_match.group(3))
+                bit_low = int(dot_bracket_match.group(4))
+                bit_start = min(bit_high, bit_low)
+                bit_end = max(bit_high, bit_low)
+            else:
+                # Single bit format: REGISTER.FIELD[bit]
+                bit_start = int(dot_bracket_match.group(3))
+                bit_end = bit_start
+
+            return {
+                'register': register_name,
+                'bit_start': bit_start,
+                'bit_end': bit_end,
+                'field_name': None,
+                'verify_field': field_name,  # Field name to verify
+                'field_definition': None,
+                'field_only': False
+            }
+
+        # Pattern 2: REGISTER.FIELD_NAME format (without brackets)
         dot_pattern = r'^([A-Z0-9_<>]+)\.([A-Z0-9_]+)$'
         dot_match = re.match(dot_pattern, query)
 
@@ -58,10 +106,13 @@ class RegisterQueryAgent:
                 'register': dot_match.group(1),
                 'bit_start': None,
                 'bit_end': None,
-                'field_name': dot_match.group(2)
+                'field_name': dot_match.group(2),
+                'verify_field': None,
+                'field_definition': None,
+                'field_only': False
             }
 
-        # Pattern 2: REGISTER_NAME[bit_position] or REGISTER_NAME[bit_high:bit_low]
+        # Pattern 3: REGISTER_NAME[bit_position] or REGISTER_NAME[bit_high:bit_low]
         bracket_pattern = r'^([A-Z0-9_<>]+)(?:\[(\d+)(?::(\d+))?\])?$'
         bracket_match = re.match(bracket_pattern, query)
 
@@ -87,20 +138,60 @@ class RegisterQueryAgent:
             bit_start = None
             bit_end = None
 
+        # Check if this might be a field-name-only query
+        # Try to find this as a field name in the database
+        if bit_start is None and bit_end is None:
+            field_search = self.search_field_name(register_name)
+            if field_search and len(field_search) > 0:
+                # This looks like a field name, not a register name
+                return {
+                    'register': None,
+                    'bit_start': None,
+                    'bit_end': None,
+                    'field_name': register_name,  # Treat as field name
+                    'verify_field': None,
+                    'field_definition': None,
+                    'field_only': True
+                }
+
         return {
             'register': register_name,
             'bit_start': bit_start,
             'bit_end': bit_end,
-            'field_name': None
+            'field_name': None,
+            'verify_field': None,
+            'field_definition': None,
+            'field_only': False
         }
 
-    def query_field_by_name(self, register_name: str, field_name: str) -> dict:
+    def search_field_name(self, field_name: str) -> list:
+        """
+        Search for all registers containing a specific field name.
+
+        Args:
+            field_name: Field name to search for
+
+        Returns:
+            List of register names containing this field, or empty list if not found
+        """
+        result = self.conn.execute("""
+            SELECT DISTINCT "register_name"
+            FROM aarch64_sysreg_fields
+            WHERE "field_name" = ?
+            ORDER BY "register_name"
+        """, [field_name]).fetchall()
+
+        return [row[0] for row in result]
+
+    def query_field_by_name(self, register_name: str, field_name: str, bit_start: int = None, bit_end: int = None) -> dict:
         """
         Query field information by field name.
 
         Args:
             register_name: Register name (e.g., 'HCR_EL2')
             field_name: Field name (e.g., 'TGE')
+            bit_start: Optional bit start position for matching specific field when multiple fields have same name
+            bit_end: Optional bit end position for matching specific field when multiple fields have same name
 
         Returns:
             dict with field information, or None if not found
@@ -119,7 +210,8 @@ class RegisterQueryAgent:
                 "field_lsb",
                 "field_width",
                 "field_position",
-                "field_description"
+                "field_description",
+                "field_definition"
             FROM aarch64_sysreg_fields
             WHERE "register_name" = ?
               AND "field_name" = ?
@@ -129,8 +221,18 @@ class RegisterQueryAgent:
         if not result:
             return None
 
-        # If multiple fields with same name (conditional fields), take the first one
-        field = result[0]
+        # If bit range is specified, find the field that matches the exact bit range
+        if bit_start is not None and bit_end is not None:
+            for row in result:
+                if row[2] == bit_end and row[3] == bit_start:  # field_msb == bit_end and field_lsb == bit_start
+                    field = row
+                    break
+            else:
+                # No field matches the exact bit range
+                return None
+        else:
+            # If multiple fields with same name, take the first one (highest MSB)
+            field = result[0]
 
         return {
             'register_name': field[0],
@@ -143,6 +245,7 @@ class RegisterQueryAgent:
             'field_width': field[4],
             'field_position': field[5],
             'field_description': field[6],
+            'field_definition': field[7],
             'query_type': 'field_name'
         }
 
@@ -201,7 +304,8 @@ class RegisterQueryAgent:
                 "field_lsb",
                 "field_width",
                 "field_position",
-                "field_description"
+                "field_description",
+                "field_definition"
             FROM aarch64_sysreg_fields
             WHERE "register_name" = ?
               AND "field_msb" >= ?
@@ -226,6 +330,7 @@ class RegisterQueryAgent:
             'field_width': field[4],
             'field_position': field[5],
             'field_description': field[6],
+            'field_definition': field[7],
             'bit_position': bit_position
         }
 
@@ -257,7 +362,8 @@ class RegisterQueryAgent:
                 "field_lsb",
                 "field_width",
                 "field_position",
-                "field_description"
+                "field_description",
+                "field_definition"
             FROM aarch64_sysreg_fields
             WHERE "register_name" = ?
               AND "field_lsb" <= ?
@@ -275,7 +381,8 @@ class RegisterQueryAgent:
                 'lsb': f[3],
                 'width': f[4],
                 'position': f[5],
-                'description': f[6]
+                'description': f[6],
+                'definition': f[7]
             }
             for f in result
         ]
@@ -321,7 +428,8 @@ class RegisterQueryAgent:
                 "field_lsb",
                 "field_width",
                 "field_position",
-                "field_description"
+                "field_description",
+                "field_definition"
             FROM aarch64_sysreg_fields
             WHERE "register_name" = ?
             ORDER BY "field_msb" DESC
@@ -341,9 +449,70 @@ class RegisterQueryAgent:
                     'lsb': f[2],
                     'width': f[3],
                     'position': f[4],
-                    'description': f[5]
+                    'description': f[5],
+                    'definition': f[6]
                 }
                 for f in fields
+            ]
+        }
+
+    def query_all_fields_by_name(self, field_name: str) -> list:
+        """
+        Query all occurrences of a field name across all registers.
+
+        Args:
+            field_name: Field name to search for
+
+        Returns:
+            List of field information dictionaries, one per register
+        """
+        # Get all registers containing this field
+        registers = self.search_field_name(field_name)
+
+        if not registers:
+            return []
+
+        # Query field info for each register
+        results = []
+        for register_name in registers:
+            field_info = self.query_field_by_name(register_name, field_name)
+            if field_info:
+                results.append(field_info)
+
+        return results
+
+    def query_by_field_definition(self, field_definition: str) -> dict:
+        """
+        Query all fields by field definition (RES0, RES1, etc.).
+        Returns register_name.field_name[field_position] for each match.
+
+        Args:
+            field_definition: Field definition (RES0, RES1, UNPREDICTABLE, UNDEFINED, RAO, UNKNOWN)
+
+        Returns:
+            dict with list of matching fields
+        """
+        # Get all fields with this definition
+        result = self.conn.execute("""
+            SELECT
+                "register_name",
+                "field_name",
+                "field_position"
+            FROM aarch64_sysreg_fields
+            WHERE "field_definition" = ?
+            ORDER BY "register_name", "field_msb" DESC
+        """, [field_definition]).fetchall()
+
+        return {
+            'field_definition': field_definition,
+            'count': len(result),
+            'fields': [
+                {
+                    'register_name': row[0],
+                    'field_name': row[1],
+                    'field_position': row[2]
+                }
+                for row in result
             ]
         }
 
@@ -375,6 +544,11 @@ class RegisterQueryAgent:
         output.append(f"Field Name:     {info['field_name']}")
         output.append(f"Field Position: {info['field_position']}")
         output.append(f"Field Width:    {info['field_width']} bits")
+
+        # Add field definition if available
+        if info.get('field_definition'):
+            output.append(f"Field Definition: {info['field_definition']}")
+
         output.append("")
 
         # Add field description if available
@@ -435,6 +609,10 @@ class RegisterQueryAgent:
             output.append(f"  Field Position: {field['position']}")
             output.append(f"  Field Width:    {field['width']} bits")
 
+            # Add field definition if available
+            if field.get('definition'):
+                output.append(f"  Field Definition: {field['definition']}")
+
             # Add description if available
             if field.get('description'):
                 output.append("")
@@ -461,6 +639,11 @@ class RegisterQueryAgent:
             # Show detailed information for each field
             for i, field in enumerate(info['fields'], 1):
                 output.append(f"[{i}] {field['position']:<10} {field['name']:<25} {field['width']:>3} bits")
+
+                # Add field definition if available
+                if field.get('definition'):
+                    output.append(f"    Field Definition: {field['definition']}")
+
                 if field.get('description'):
                     output.append("    Description:")
                     # Wrap long description text
@@ -527,6 +710,11 @@ class RegisterQueryAgent:
 
         for i, field in enumerate(info['fields'], 1):
             output.append(f"[{i}] {field['position']:<10} {field['name']:<25} {field['width']:>3} bits")
+
+            # Add field definition if available
+            if field.get('definition'):
+                output.append(f"    Field Definition: {field['definition']}")
+
             if field.get('description'):
                 output.append("    Description:")
                 # Wrap long description text
@@ -551,6 +739,77 @@ class RegisterQueryAgent:
         output.append("")
         return "\n".join(output)
 
+    def format_field_definition_answer(self, info: dict) -> str:
+        """Format answer for a field definition query"""
+        output = []
+
+        # Output each field in register_name.field_name[field_position] format
+        for field in info['fields']:
+            output.append(f"{field['register_name']}.{field['field_name']}{field['field_position']}")
+
+        return "\n".join(output)
+
+    def format_multiple_fields_answer(self, field_infos: list) -> str:
+        """Format answer for field-name-only query (multiple registers)"""
+        if not field_infos:
+            return ""
+
+        output = []
+
+        # Show summary header
+        field_name = field_infos[0]['field_name']
+        output.append("=" * 80)
+        output.append(f"Field Name: {field_name}")
+        output.append(f"Found in {len(field_infos)} register(s)")
+        output.append("=" * 80)
+        output.append("")
+
+        # Show each register's field info
+        for i, info in enumerate(field_infos, 1):
+            if i > 1:
+                output.append("")
+                output.append("-" * 80)
+                output.append("")
+
+            output.append(f"[{i}] Register: {info['register_name']}")
+            output.append(f"    Long Name:      {info.get('long_name', 'N/A')}")
+            output.append(f"    Register Width: {info.get('register_width', 'N/A')} bits")
+
+            # Add features
+            if info.get('features'):
+                features_str = ', '.join(info['features'])
+                output.append(f"    Features:       {features_str}")
+
+            output.append("")
+            output.append(f"    Field Position: {info['field_position']}")
+            output.append(f"    Field Width:    {info['field_width']} bits")
+
+            # Add field definition if available
+            if info.get('field_definition'):
+                output.append(f"    Field Definition: {info['field_definition']}")
+
+            # Add field description if available
+            if info.get('field_description'):
+                output.append("")
+                output.append("    Description:")
+                desc = info['field_description']
+                if len(desc) > 72:
+                    words = desc.split()
+                    line = "      "
+                    for word in words:
+                        if len(line) + len(word) + 1 > 78:
+                            output.append(line)
+                            line = "      " + word
+                        else:
+                            line += " " + word if line != "      " else word
+                    if line != "      ":
+                        output.append(line)
+                else:
+                    output.append(f"      {desc}")
+
+        output.append("")
+        return "\n".join(output)
+
     def answer_query(self, query: str) -> str:
         """Main method to answer a user query"""
         parsed = self.parse_query(query)
@@ -559,19 +818,41 @@ class RegisterQueryAgent:
             return (
                 f"Error: Invalid query format: '{query}'\n\n"
                 "Supported formats:\n"
-                "  - REGISTER_NAME[bit]       (e.g., HCR_EL2[1])\n"
-                "  - REGISTER_NAME[high:low]  (e.g., HCR_EL2[31:8])\n"
-                "  - REGISTER_NAME.FIELD      (e.g., HCR_EL2.TGE)\n"
-                "  - REGISTER_NAME            (e.g., ALLINT)\n"
+                "  - REGISTER_NAME[bit]          (e.g., HCR_EL2[1])\n"
+                "  - REGISTER_NAME[high:low]     (e.g., HCR_EL2[31:8])\n"
+                "  - REGISTER_NAME.FIELD         (e.g., HCR_EL2.TGE)\n"
+                "  - REGISTER_NAME.FIELD[range]  (e.g., TRCIDR12.NUMCONDKEY[31:0])\n"
+                "  - REGISTER_NAME               (e.g., ALLINT)\n"
+                "  - FIELD_NAME                  (e.g., NUMCONDKEY)\n"
+                "  - FIELD_DEFINITION            (e.g., RES0, RES1, UNPREDICTABLE)\n"
             )
+
+        # Handle field definition query
+        field_definition = parsed.get('field_definition')
+        if field_definition is not None:
+            info = self.query_by_field_definition(field_definition)
+            return self.format_field_definition_answer(info)
 
         register_name = parsed['register']
         bit_start = parsed['bit_start']
         bit_end = parsed['bit_end']
         field_name = parsed.get('field_name')
+        verify_field = parsed.get('verify_field')
+        field_only = parsed.get('field_only', False)
 
-        # Handle field name query
-        if field_name is not None:
+        # Handle field-name-only query (search across all registers)
+        if field_only and field_name is not None:
+            field_infos = self.query_all_fields_by_name(field_name)
+            if field_infos:
+                return self.format_multiple_fields_answer(field_infos)
+            else:
+                return (
+                    f"Error: Field '{field_name}' not found in any register\n"
+                    f"The field name may not exist in the database.\n"
+                )
+
+        # Handle field name query with register
+        if field_name is not None and register_name is not None:
             info = self.query_field_by_name(register_name, field_name)
             if info:
                 return self.format_bit_field_answer(info)
@@ -583,6 +864,28 @@ class RegisterQueryAgent:
 
         # Handle bit position/range queries
         if bit_start is not None:
+            # First, verify field name if provided (REGISTER.FIELD[range] format)
+            if verify_field is not None:
+                # Check if the specified field exists and matches the bit range
+                # Pass bit_start and bit_end to find the exact field at this position
+                field_info = self.query_field_by_name(register_name, verify_field, bit_start, bit_end)
+                if not field_info:
+                    # Field with this name at this bit range doesn't exist
+                    # Check if field exists at any position
+                    any_field = self.query_field_by_name(register_name, verify_field)
+                    if any_field:
+                        return (
+                            f"Error: Field '{verify_field}' exists but not at bit range [{bit_end}:{bit_start}]\n"
+                            f"Actual position of '{verify_field}': {any_field['field_position']}\n"
+                            f"Processing query as: {register_name}[{bit_end}:{bit_start}]\n"
+                        )
+                    else:
+                        return (
+                            f"Error: Field '{verify_field}' not found in register '{register_name}'\n"
+                            f"The field '{verify_field}[{bit_end}:{bit_start}]' does not exist.\n"
+                        )
+                # Field name and bit range match, proceed with the query
+
             if bit_start == bit_end:
                 # Query specific bit field (single bit)
                 info = self.query_bit_field(register_name, bit_start)
@@ -627,6 +930,8 @@ def main():
         print("  python3 query_register.py 'HCR_EL2.TGE'      # Field name")
         print("  python3 query_register.py 'ALLINT[13]'       # Single bit")
         print("  python3 query_register.py 'ACCDATA_EL1'      # Entire register")
+        print("  python3 query_register.py 'NUMCONDKEY'       # Field across all registers")
+        print("  python3 query_register.py 'RES0'             # All RES0 fields")
         print()
         sys.exit(1)
 

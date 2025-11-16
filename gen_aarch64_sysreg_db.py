@@ -118,14 +118,14 @@ class SysRegParser:
 
     def _extract_field_info(self) -> List[Dict]:
         """
-        Extract field names, bit positions, and descriptions from the register XML.
+        Extract field names, bit positions, descriptions, and definitions from the register XML.
         Returns a list of field dictionaries sorted by MSB (most significant bit) in descending order.
 
         Example output:
         [
-            {'name': 'RES0', 'msb': 63, 'lsb': 14, 'width': 50, 'position': '[63:14]', 'description': 'Reserved, RES0.'},
-            {'name': 'ALLINT', 'msb': 13, 'lsb': 13, 'width': 1, 'position': '[13:13]', 'description': 'All interrupt mask...'},
-            {'name': 'RES0', 'msb': 12, 'lsb': 0, 'width': 13, 'position': '[12:0]', 'description': 'Reserved, RES0.'}
+            {'name': 'RES0', 'msb': 63, 'lsb': 14, 'width': 50, 'position': '[63:14]', 'description': 'Reserved, RES0.', 'definition': 'RES0'},
+            {'name': 'ALLINT', 'msb': 13, 'lsb': 13, 'width': 1, 'position': '[13:13]', 'description': 'All interrupt mask...', 'definition': None},
+            {'name': 'RES0', 'msb': 12, 'lsb': 0, 'width': 13, 'position': '[12:0]', 'description': 'Reserved, RES0.', 'definition': 'RES0'}
         ]
         """
         fields_list = []
@@ -147,6 +147,9 @@ class SysRegParser:
             # Get field description from <field_description> elements
             field_description = self._extract_field_description(field)
 
+            # Get field definition (RES0, RES1, etc.)
+            field_definition = self._extract_field_definition(field)
+
             # Get bit positions
             if field_msb_elem is not None and field_lsb_elem is not None:
                 try:
@@ -160,7 +163,8 @@ class SysRegParser:
                         'lsb': lsb,
                         'width': width,
                         'position': f'[{msb}:{lsb}]',
-                        'description': field_description
+                        'description': field_description,
+                        'definition': field_definition
                     })
                 except (ValueError, AttributeError):
                     # Skip fields with invalid bit positions
@@ -212,6 +216,44 @@ class SysRegParser:
             return ' '.join(descriptions)
         else:
             return None
+
+    def _extract_field_definition(self, field_element) -> Optional[str]:
+        """
+        Extract field definition (RES0, RES1, RAO, WI, UNKNOWN, etc.) from field element.
+
+        Extraction priority:
+        1. rwtype attribute (e.g., rwtype="RES0")
+        2. reserved_type attribute (e.g., reserved_type="RES0")
+        3. <arm-defined-word> tags in field_description (e.g., <arm-defined-word>RES0</arm-defined-word>)
+
+        Args:
+            field_element: The field XML element
+
+        Returns:
+            Field definition string (RES0, RES1, etc.) or None if not found
+        """
+        # Priority 1: Check rwtype attribute
+        rwtype = field_element.get('rwtype')
+        if rwtype and rwtype in ('RES0', 'RES1', 'RAO', 'WI', 'UNKNOWN', 'UNDEFINED', 'UNPREDICTABLE'):
+            return rwtype
+
+        # Priority 2: Check reserved_type attribute
+        reserved_type = field_element.get('reserved_type')
+        if reserved_type and reserved_type in ('RES0', 'RES1', 'RAO', 'WI', 'UNKNOWN', 'UNDEFINED', 'UNPREDICTABLE'):
+            return reserved_type
+
+        # Priority 3: Extract from <arm-defined-word> tags in field_description
+        for desc_elem in field_element.findall('field_description'):
+            for para in desc_elem.findall('.//para'):
+                # Find all arm-defined-word elements
+                for arm_word in para.findall('.//arm-defined-word'):
+                    if arm_word.text:
+                        word = arm_word.text.strip()
+                        # Check if it's one of the known definitions
+                        if word in ('RES0', 'RES1', 'RAO', 'WI', 'UNKNOWN', 'UNDEFINED', 'UNPREDICTABLE'):
+                            return word
+
+        return None
 
     def _extract_features(self) -> Set[str]:
         """
@@ -324,6 +366,7 @@ class SysRegDatabase:
                 "field_width" INTEGER NOT NULL,
                 "field_position" VARCHAR NOT NULL,
                 "field_description" VARCHAR,
+                "field_definition" VARCHAR,
                 "created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -427,7 +470,7 @@ class SysRegDatabase:
 
         Args:
             register_name: The register name
-            fields: List of field dictionaries with 'name', 'msb', 'lsb', 'width', 'position', 'description'
+            fields: List of field dictionaries with 'name', 'msb', 'lsb', 'width', 'position', 'description', 'definition'
 
         Returns: Number of fields inserted
         """
@@ -443,8 +486,8 @@ class SysRegDatabase:
                 self.conn.execute("""
                     INSERT INTO aarch64_sysreg_fields (
                         "register_name", "field_name", "field_msb", "field_lsb",
-                        "field_width", "field_position", "field_description"
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        "field_width", "field_position", "field_description", "field_definition"
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, [
                     register_name,
                     field['name'],
@@ -452,7 +495,8 @@ class SysRegDatabase:
                     field['lsb'],
                     field['width'],
                     field['position'],
-                    field.get('description')  # Use .get() to handle fields without description
+                    field.get('description'),  # Use .get() to handle fields without description
+                    field.get('definition')   # Use .get() to handle fields without definition
                 ])
                 inserted_count += 1
             except Exception as e:
