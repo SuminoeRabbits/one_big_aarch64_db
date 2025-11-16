@@ -94,6 +94,13 @@ tar -xzf SysReg_xml_A_profile-2025-09_ASL1.tar.gz -C source_202509/
 Run the database generator script:
 
 ```bash
+cat << EOF > requirements.txt
+duckdb
+pandas
+openpyxl
+EOF
+python -m venv myenv && source myenv/bin/activate && pip install --upgrade pip && \
+pip install -r requirements.txt
 python gen_aarch64_sysreg_db.py
 ```
 
