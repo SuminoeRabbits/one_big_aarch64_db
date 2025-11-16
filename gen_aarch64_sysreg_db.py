@@ -316,27 +316,27 @@ class SysRegDatabase:
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS aarch64_sysreg_fields (
-                id INTEGER PRIMARY KEY DEFAULT nextval('aarch64_sysreg_fields_id_seq'),
-                register_name VARCHAR NOT NULL,
-                field_name VARCHAR NOT NULL,
-                field_msb INTEGER NOT NULL,
-                field_lsb INTEGER NOT NULL,
-                field_width INTEGER NOT NULL,
+                "id" INTEGER PRIMARY KEY DEFAULT nextval('aarch64_sysreg_fields_id_seq'),
+                "register_name" VARCHAR NOT NULL,
+                "field_name" VARCHAR NOT NULL,
+                "field_msb" INTEGER NOT NULL,
+                "field_lsb" INTEGER NOT NULL,
+                "field_width" INTEGER NOT NULL,
                 "field_position" VARCHAR NOT NULL,
                 "field_description" VARCHAR,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                "created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
         # Create index for faster field queries
         self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_fields_register
-            ON aarch64_sysreg_fields(register_name)
+            ON aarch64_sysreg_fields("register_name")
         """)
 
         self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_fields_name
-            ON aarch64_sysreg_fields(field_name)
+            ON aarch64_sysreg_fields("field_name")
         """)
 
         # Metadata table
@@ -417,7 +417,7 @@ class SysRegDatabase:
         """Clear all existing fields for a register before inserting new ones"""
         self.conn.execute("""
             DELETE FROM aarch64_sysreg_fields
-            WHERE register_name = ?
+            WHERE "register_name" = ?
         """, [register_name])
 
     def insert_fields(self, register_name: str, fields: List[Dict]) -> int:
@@ -442,8 +442,8 @@ class SysRegDatabase:
             try:
                 self.conn.execute("""
                     INSERT INTO aarch64_sysreg_fields (
-                        register_name, field_name, field_msb, field_lsb,
-                        field_width, "field_position", "field_description"
+                        "register_name", "field_name", "field_msb", "field_lsb",
+                        "field_width", "field_position", "field_description"
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, [
                     register_name,

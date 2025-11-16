@@ -59,8 +59,8 @@ def export_to_excel():
         print(f"  [2/3] Exporting 'fields' sheet ({field_count} rows)...")
         df_fields = conn.execute("""
             SELECT
-                id, register_name, field_name, field_msb, field_lsb,
-                field_width, "field_position", "field_description", created_at
+                "id", "register_name", "field_name", "field_msb", "field_lsb",
+                "field_width", "field_position", "field_description", "created_at"
             FROM aarch64_sysreg_fields
         """).df()
         df_fields.to_excel(writer, sheet_name='fields', index=False)
@@ -74,14 +74,14 @@ def export_to_excel():
                 r.long_name,
                 r.register_width,
                 r.field_count,
-                f.field_name,
-                f.field_msb,
-                f.field_lsb,
-                f.field_width,
+                f."field_name",
+                f."field_msb",
+                f."field_lsb",
+                f."field_width",
                 f."field_position"
             FROM aarch64_sysreg r
-            LEFT JOIN aarch64_sysreg_fields f ON r.register_name = f.register_name
-            ORDER BY r.register_name, f.field_msb DESC
+            LEFT JOIN aarch64_sysreg_fields f ON r.register_name = f."register_name"
+            ORDER BY r.register_name, f."field_msb" DESC
         """).df()
         df_joined.to_excel(writer, sheet_name='registers_with_fields', index=False)
 

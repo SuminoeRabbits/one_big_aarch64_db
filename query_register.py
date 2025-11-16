@@ -87,18 +87,18 @@ class RegisterQueryAgent:
         # Find the field that contains this bit position
         result = self.conn.execute("""
             SELECT
-                register_name,
-                field_name,
-                field_msb,
-                field_lsb,
-                field_width,
+                "register_name",
+                "field_name",
+                "field_msb",
+                "field_lsb",
+                "field_width",
                 "field_position",
                 "field_description"
             FROM aarch64_sysreg_fields
-            WHERE register_name = ?
-              AND field_msb >= ?
-              AND field_lsb <= ?
-            ORDER BY field_msb DESC
+            WHERE "register_name" = ?
+              AND "field_msb" >= ?
+              AND "field_lsb" <= ?
+            ORDER BY "field_msb" DESC
         """, [register_name, bit_position, bit_position]).fetchall()
 
         if not result:
@@ -135,18 +135,18 @@ class RegisterQueryAgent:
         # A field overlaps if: field_lsb <= bit_end AND field_msb >= bit_start
         result = self.conn.execute("""
             SELECT
-                register_name,
-                field_name,
-                field_msb,
-                field_lsb,
-                field_width,
+                "register_name",
+                "field_name",
+                "field_msb",
+                "field_lsb",
+                "field_width",
                 "field_position",
                 "field_description"
             FROM aarch64_sysreg_fields
-            WHERE register_name = ?
-              AND field_lsb <= ?
-              AND field_msb >= ?
-            ORDER BY field_msb DESC
+            WHERE "register_name" = ?
+              AND "field_lsb" <= ?
+              AND "field_msb" >= ?
+            ORDER BY "field_msb" DESC
         """, [register_name, bit_end, bit_start]).fetchall()
 
         if not result:
@@ -199,15 +199,15 @@ class RegisterQueryAgent:
         # Get all fields
         fields = self.conn.execute("""
             SELECT
-                field_name,
-                field_msb,
-                field_lsb,
-                field_width,
+                "field_name",
+                "field_msb",
+                "field_lsb",
+                "field_width",
                 "field_position",
                 "field_description"
             FROM aarch64_sysreg_fields
-            WHERE register_name = ?
-            ORDER BY field_msb DESC
+            WHERE "register_name" = ?
+            ORDER BY "field_msb" DESC
         """, [register_name]).fetchall()
 
         return {

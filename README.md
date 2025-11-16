@@ -95,9 +95,9 @@ Run the database generator script:
 
 ```bash
 cat << EOF > requirements.txt
-duckdb
-pandas
-openpyxl
+duckdb>=0.8.0,<2.0.0
+pandas>=1.3.0,<3.0.0
+openpyxl>=3.0.9,<4.0.0
 EOF
 python -m venv myenv && source myenv/bin/activate && pip install --upgrade pip && \
 pip install -r requirements.txt
