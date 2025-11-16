@@ -394,11 +394,15 @@ python3 query_register.py 'ALLINT'
 
 # Query another bit field
 python3 query_register.py 'ACCDATA_EL1[31]'
+
+# Query by field name (NEW!)
+python3 query_register.py 'HCR_EL2.TGE'
 ```
 
 **Supported query formats:**
 - `REGISTER_NAME[bit]` - Query a single bit position (e.g., `HCR_EL2[1]`)
 - `REGISTER_NAME[high:low]` - Query a bit range (e.g., `HCR_EL2[31:8]`)
+- `REGISTER_NAME.FIELD` - Query by field name (e.g., `HCR_EL2.TGE`)
 - `REGISTER_NAME` - Query entire register information (e.g., `ALLINT`)
 
 **Example output for `HCR_EL2[1]`:**
@@ -408,9 +412,18 @@ Register: HCR_EL2
 Bit Position: [1]
 ================================================================================
 
+Long Name:      Hypervisor Configuration Register
+Register Width: 64 bits
+Features:       FEAT_AA64
+
 Field Name:     SWIO
 Field Position: [1:1]
 Field Width:    1 bits
+
+Description:
+  Set/Way Invalidation Override. Causes EL1 execution of the data cache
+  invalidate by set/way instructions to perform a data cache clean and
+  invalidate by set/way...
 
 Explanation:
   Bit 1 belongs to the 'SWIO' field,
@@ -424,6 +437,10 @@ Register: HCR_EL2
 Bit Range: [31:8] (24 bits)
 ================================================================================
 
+Long Name:      Hypervisor Configuration Register
+Register Width: 64 bits
+Features:       FEAT_AA64
+
 This range spans 27 field(s):
 
 Bit Position    Field Name                     Width
@@ -434,6 +451,29 @@ Bit Position    Field Name                     Width
 [29:29]         HCD                              1 bits
 [29:29]         RES0                             1 bits
 ...
+```
+
+**Example output for `HCR_EL2.TGE` (field name query):**
+```
+================================================================================
+Register: HCR_EL2
+Field Name: TGE
+================================================================================
+
+Long Name:      Hypervisor Configuration Register
+Register Width: 64 bits
+Features:       FEAT_AA64
+
+Field Name:     TGE
+Field Position: [27:27]
+Field Width:    1 bits
+
+Description:
+  Trap General Exceptions, from EL0. HCR_EL2.TGE must not be cached in a TLB.
+
+Explanation:
+  The 'TGE' field is located at bits [27:27],
+  spanning 1 bits total in the HCR_EL2 register.
 ```
 
 **Example output for `ALLINT`:**

@@ -5,9 +5,10 @@ AArch64 System Register Query Agent
 This script answers questions about AArch64 system registers and their bit fields.
 
 Examples:
-    python3 query_register.py "HCR_EL2[1]"
-    python3 query_register.py "ALLINT[13]"
-    python3 query_register.py "ACCDATA_EL1"
+    python3 query_register.py "HCR_EL2[1]"      # Query bit position
+    python3 query_register.py "HCR_EL2[31:8]"   # Query bit range
+    python3 query_register.py "HCR_EL2.TGE"     # Query by field name
+    python3 query_register.py "ACCDATA_EL1"     # Query entire register
 """
 
 import sys
@@ -38,33 +39,48 @@ class RegisterQueryAgent:
 
     def parse_query(self, query: str) -> dict:
         """
-        Parse user query to extract register name and optional bit position/range.
+        Parse user query to extract register name and optional bit position/range/field name.
 
         Examples:
-            "HCR_EL2[1]" -> {'register': 'HCR_EL2', 'bit_start': 1, 'bit_end': 1}
-            "HCR_EL2[31:8]" -> {'register': 'HCR_EL2', 'bit_start': 8, 'bit_end': 31}
-            "ACCDATA_EL1" -> {'register': 'ACCDATA_EL1', 'bit_start': None, 'bit_end': None}
+            "HCR_EL2[1]" -> {'register': 'HCR_EL2', 'bit_start': 1, 'bit_end': 1, 'field_name': None}
+            "HCR_EL2[31:8]" -> {'register': 'HCR_EL2', 'bit_start': 8, 'bit_end': 31, 'field_name': None}
+            "ACCDATA_EL1" -> {'register': 'ACCDATA_EL1', 'bit_start': None, 'bit_end': None, 'field_name': None}
+            "HCR_EL2.TGE" -> {'register': 'HCR_EL2', 'bit_start': None, 'bit_end': None, 'field_name': 'TGE'}
         """
-        # Pattern: REGISTER_NAME[bit_position] or REGISTER_NAME[bit_high:bit_low]
-        pattern = r'^([A-Z0-9_<>]+)(?:\[(\d+)(?::(\d+))?\])?$'
-        match = re.match(pattern, query.strip())
+        query = query.strip()
 
-        if not match:
+        # Pattern 1: REGISTER.FIELD_NAME format
+        dot_pattern = r'^([A-Z0-9_<>]+)\.([A-Z0-9_]+)$'
+        dot_match = re.match(dot_pattern, query)
+
+        if dot_match:
+            return {
+                'register': dot_match.group(1),
+                'bit_start': None,
+                'bit_end': None,
+                'field_name': dot_match.group(2)
+            }
+
+        # Pattern 2: REGISTER_NAME[bit_position] or REGISTER_NAME[bit_high:bit_low]
+        bracket_pattern = r'^([A-Z0-9_<>]+)(?:\[(\d+)(?::(\d+))?\])?$'
+        bracket_match = re.match(bracket_pattern, query)
+
+        if not bracket_match:
             return None
 
-        register_name = match.group(1)
+        register_name = bracket_match.group(1)
 
-        if match.group(2):
-            if match.group(3):
+        if bracket_match.group(2):
+            if bracket_match.group(3):
                 # Range format: [high:low]
-                bit_high = int(match.group(2))
-                bit_low = int(match.group(3))
+                bit_high = int(bracket_match.group(2))
+                bit_low = int(bracket_match.group(3))
                 # Ensure high >= low
                 bit_start = min(bit_high, bit_low)
                 bit_end = max(bit_high, bit_low)
             else:
                 # Single bit format: [bit]
-                bit_start = int(match.group(2))
+                bit_start = int(bracket_match.group(2))
                 bit_end = bit_start
         else:
             # No bit specification
@@ -74,7 +90,94 @@ class RegisterQueryAgent:
         return {
             'register': register_name,
             'bit_start': bit_start,
-            'bit_end': bit_end
+            'bit_end': bit_end,
+            'field_name': None
+        }
+
+    def query_field_by_name(self, register_name: str, field_name: str) -> dict:
+        """
+        Query field information by field name.
+
+        Args:
+            register_name: Register name (e.g., 'HCR_EL2')
+            field_name: Field name (e.g., 'TGE')
+
+        Returns:
+            dict with field information, or None if not found
+        """
+        # Get register metadata first
+        metadata = self.get_register_metadata(register_name)
+        if not metadata:
+            return None
+
+        # Find the field by name
+        result = self.conn.execute("""
+            SELECT
+                "register_name",
+                "field_name",
+                "field_msb",
+                "field_lsb",
+                "field_width",
+                "field_position",
+                "field_description"
+            FROM aarch64_sysreg_fields
+            WHERE "register_name" = ?
+              AND "field_name" = ?
+            ORDER BY "field_msb" DESC
+        """, [register_name, field_name]).fetchall()
+
+        if not result:
+            return None
+
+        # If multiple fields with same name (conditional fields), take the first one
+        field = result[0]
+
+        return {
+            'register_name': field[0],
+            'features': metadata['features'],
+            'long_name': metadata['long_name'],
+            'register_width': metadata['register_width'],
+            'field_name': field[1],
+            'field_msb': field[2],
+            'field_lsb': field[3],
+            'field_width': field[4],
+            'field_position': field[5],
+            'field_description': field[6],
+            'query_type': 'field_name'
+        }
+
+    def get_register_metadata(self, register_name: str) -> dict:
+        """
+        Get register metadata including feature names and long name.
+
+        Returns:
+            dict with register metadata, or None if not found
+        """
+        # Get all features and metadata for this register
+        result = self.conn.execute("""
+            SELECT
+                feature_name,
+                long_name,
+                register_width,
+                reg_purpose
+            FROM aarch64_sysreg
+            WHERE register_name = ?
+        """, [register_name]).fetchall()
+
+        if not result:
+            return None
+
+        # Collect all features for this register
+        features = [row[0] for row in result]
+        # Use the first row for metadata (should be same across all features)
+        first_row = result[0]
+
+        return {
+            'register_name': register_name,
+            'features': features,
+            'long_name': first_row[1],
+            'register_width': first_row[2],
+            'reg_purpose': first_row[3]
         }
 
     def query_bit_field(self, register_name: str, bit_position: int) -> dict:
@@ -84,6 +187,11 @@ class RegisterQueryAgent:
         Returns:
             dict with field information, or None if not found
         """
+        # Get register metadata first
+        metadata = self.get_register_metadata(register_name)
+        if not metadata:
+            return None
+
         # Find the field that contains this bit position
         result = self.conn.execute("""
             SELECT
@@ -109,6 +217,9 @@ class RegisterQueryAgent:
 
         return {
             'register_name': field[0],
+            'features': metadata['features'],
+            'long_name': metadata['long_name'],
+            'register_width': metadata['register_width'],
             'field_name': field[1],
             'field_msb': field[2],
             'field_lsb': field[3],
@@ -131,6 +242,11 @@ class RegisterQueryAgent:
         Returns:
             dict with fields that overlap the range, or None if not found
         """
+        # Get register metadata first
+        metadata = self.get_register_metadata(register_name)
+        if not metadata:
+            return None
+
         # Find all fields that overlap with the bit range
         # A field overlaps if: field_lsb <= bit_end AND field_msb >= bit_start
         result = self.conn.execute("""
@@ -166,6 +282,9 @@ class RegisterQueryAgent:
 
         return {
             'register_name': register_name,
+            'features': metadata['features'],
+            'long_name': metadata['long_name'],
+            'register_width': metadata['register_width'],
             'bit_start': bit_start,
             'bit_end': bit_end,
             'bit_range': f'[{bit_end}:{bit_start}]',
@@ -180,21 +299,19 @@ class RegisterQueryAgent:
         Returns:
             dict with register information, or None if not found
         """
-        # Get register info
+        # Get register metadata including all features
+        metadata = self.get_register_metadata(register_name)
+        if not metadata:
+            return None
+
+        # Get field count from first feature entry
         reg_info = self.conn.execute("""
             SELECT DISTINCT
-                register_name,
-                long_name,
-                register_width,
-                field_count,
-                reg_purpose
+                field_count
             FROM aarch64_sysreg
             WHERE register_name = ?
             LIMIT 1
         """, [register_name]).fetchone()
-
-        if not reg_info:
-            return None
 
         # Get all fields
         fields = self.conn.execute("""
@@ -211,11 +328,12 @@ class RegisterQueryAgent:
         """, [register_name]).fetchall()
 
         return {
-            'register_name': reg_info[0],
-            'long_name': reg_info[1],
-            'register_width': reg_info[2],
-            'field_count': reg_info[3],
-            'reg_purpose': reg_info[4],
+            'register_name': register_name,
+            'features': metadata['features'],
+            'long_name': metadata['long_name'],
+            'register_width': metadata['register_width'],
+            'field_count': reg_info[0] if reg_info else 0,
+            'reg_purpose': metadata['reg_purpose'],
             'fields': [
                 {
                     'name': f[0],
@@ -230,13 +348,30 @@ class RegisterQueryAgent:
         }
 
     def format_bit_field_answer(self, info: dict) -> str:
-        """Format answer for a bit field query"""
+        """Format answer for a bit field query or field name query"""
         output = []
         output.append("=" * 80)
         output.append(f"Register: {info['register_name']}")
-        output.append(f"Bit Position: [{info['bit_position']}]")
+
+        # Show different header based on query type
+        if info.get('query_type') == 'field_name':
+            output.append(f"Field Name: {info['field_name']}")
+        elif info.get('bit_position') is not None:
+            output.append(f"Bit Position: [{info['bit_position']}]")
+
         output.append("=" * 80)
         output.append("")
+
+        # Add register metadata
+        output.append(f"Long Name:      {info.get('long_name', 'N/A')}")
+        output.append(f"Register Width: {info.get('register_width', 'N/A')} bits")
+
+        # Add features
+        if info.get('features'):
+            features_str = ', '.join(info['features'])
+            output.append(f"Features:       {features_str}")
+        output.append("")
+
         output.append(f"Field Name:     {info['field_name']}")
         output.append(f"Field Position: {info['field_position']}")
         output.append(f"Field Width:    {info['field_width']} bits")
@@ -263,8 +398,12 @@ class RegisterQueryAgent:
             output.append("")
 
         output.append("Explanation:")
-        output.append(f"  Bit {info['bit_position']} belongs to the '{info['field_name']}' field,")
-        output.append(f"  which spans bits {info['field_position']} ({info['field_width']} bits total).")
+        if info.get('query_type') == 'field_name':
+            output.append(f"  The '{info['field_name']}' field is located at bits {info['field_position']},")
+            output.append(f"  spanning {info['field_width']} bits total in the {info['register_name']} register.")
+        else:
+            output.append(f"  Bit {info['bit_position']} belongs to the '{info['field_name']}' field,")
+            output.append(f"  which spans bits {info['field_position']} ({info['field_width']} bits total).")
         output.append("")
 
         return "\n".join(output)
@@ -276,6 +415,16 @@ class RegisterQueryAgent:
         output.append(f"Register: {info['register_name']}")
         output.append(f"Bit Range: {info['bit_range']} ({info['range_width']} bits)")
         output.append("=" * 80)
+        output.append("")
+
+        # Add register metadata
+        output.append(f"Long Name:      {info.get('long_name', 'N/A')}")
+        output.append(f"Register Width: {info.get('register_width', 'N/A')} bits")
+
+        # Add features
+        if info.get('features'):
+            features_str = ', '.join(info['features'])
+            output.append(f"Features:       {features_str}")
         output.append("")
 
         if len(info['fields']) == 1:
@@ -346,6 +495,11 @@ class RegisterQueryAgent:
         output.append(f"Long Name:      {info['long_name']}")
         output.append(f"Register Width: {info['register_width']} bits")
         output.append(f"Field Count:    {info['field_count']}")
+
+        # Add features
+        if info.get('features'):
+            features_str = ', '.join(info['features'])
+            output.append(f"Features:       {features_str}")
         output.append("")
 
         if info['reg_purpose']:
@@ -407,13 +561,27 @@ class RegisterQueryAgent:
                 "Supported formats:\n"
                 "  - REGISTER_NAME[bit]       (e.g., HCR_EL2[1])\n"
                 "  - REGISTER_NAME[high:low]  (e.g., HCR_EL2[31:8])\n"
+                "  - REGISTER_NAME.FIELD      (e.g., HCR_EL2.TGE)\n"
                 "  - REGISTER_NAME            (e.g., ALLINT)\n"
             )
 
         register_name = parsed['register']
         bit_start = parsed['bit_start']
         bit_end = parsed['bit_end']
+        field_name = parsed.get('field_name')
 
+        # Handle field name query
+        if field_name is not None:
+            info = self.query_field_by_name(register_name, field_name)
+            if info:
+                return self.format_bit_field_answer(info)
+            else:
+                return (
+                    f"Error: Field '{field_name}' not found in register '{register_name}'\n"
+                    f"The register or field may not exist.\n"
+                )
+
+        # Handle bit position/range queries
         if bit_start is not None:
             if bit_start == bit_end:
                 # Query specific bit field (single bit)
@@ -456,6 +624,7 @@ def main():
         print("Examples:")
         print("  python3 query_register.py 'HCR_EL2[1]'       # Single bit")
         print("  python3 query_register.py 'HCR_EL2[31:8]'    # Bit range")
+        print("  python3 query_register.py 'HCR_EL2.TGE'      # Field name")
         print("  python3 query_register.py 'ALLINT[13]'       # Single bit")
         print("  python3 query_register.py 'ACCDATA_EL1'      # Entire register")
         print()
