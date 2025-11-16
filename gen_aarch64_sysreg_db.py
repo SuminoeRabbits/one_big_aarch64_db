@@ -323,7 +323,7 @@ class SysRegDatabase:
                 field_lsb INTEGER NOT NULL,
                 field_width INTEGER NOT NULL,
                 "field_position" VARCHAR NOT NULL,
-                field_description VARCHAR,
+                "field_description" VARCHAR,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -443,7 +443,7 @@ class SysRegDatabase:
                 self.conn.execute("""
                     INSERT INTO aarch64_sysreg_fields (
                         register_name, field_name, field_msb, field_lsb,
-                        field_width, "field_position", field_description
+                        field_width, "field_position", "field_description"
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, [
                     register_name,

@@ -57,7 +57,12 @@ def export_to_excel():
 
         # Sheet 2: Fields table
         print(f"  [2/3] Exporting 'fields' sheet ({field_count} rows)...")
-        df_fields = conn.execute('SELECT * FROM aarch64_sysreg_fields').df()
+        df_fields = conn.execute("""
+            SELECT
+                id, register_name, field_name, field_msb, field_lsb,
+                field_width, "field_position", "field_description", created_at
+            FROM aarch64_sysreg_fields
+        """).df()
         df_fields.to_excel(writer, sheet_name='fields', index=False)
 
         # Sheet 3: Joined view (register + fields)

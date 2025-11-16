@@ -93,7 +93,7 @@ class RegisterQueryAgent:
                 field_lsb,
                 field_width,
                 "field_position",
-                field_description
+                "field_description"
             FROM aarch64_sysreg_fields
             WHERE register_name = ?
               AND field_msb >= ?
@@ -141,7 +141,7 @@ class RegisterQueryAgent:
                 field_lsb,
                 field_width,
                 "field_position",
-                field_description
+                "field_description"
             FROM aarch64_sysreg_fields
             WHERE register_name = ?
               AND field_lsb <= ?
@@ -204,7 +204,7 @@ class RegisterQueryAgent:
                 field_lsb,
                 field_width,
                 "field_position",
-                field_description
+                "field_description"
             FROM aarch64_sysreg_fields
             WHERE register_name = ?
             ORDER BY field_msb DESC
