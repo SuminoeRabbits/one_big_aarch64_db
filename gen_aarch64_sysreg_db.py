@@ -112,14 +112,14 @@ class SysRegParser:
 
     def _extract_field_info(self) -> List[Dict]:
         """
-        Extract field names and bit positions from the register XML.
+        Extract field names, bit positions, and descriptions from the register XML.
         Returns a list of field dictionaries sorted by MSB (most significant bit) in descending order.
 
         Example output:
         [
-            {'name': 'RES0', 'msb': 63, 'lsb': 14, 'width': 50, 'position': '[63:14]'},
-            {'name': 'ALLINT', 'msb': 13, 'lsb': 13, 'width': 1, 'position': '[13:13]'},
-            {'name': 'RES0', 'msb': 12, 'lsb': 0, 'width': 13, 'position': '[12:0]'}
+            {'name': 'RES0', 'msb': 63, 'lsb': 14, 'width': 50, 'position': '[63:14]', 'description': 'Reserved, RES0.'},
+            {'name': 'ALLINT', 'msb': 13, 'lsb': 13, 'width': 1, 'position': '[13:13]', 'description': 'All interrupt mask...'},
+            {'name': 'RES0', 'msb': 12, 'lsb': 0, 'width': 13, 'position': '[12:0]', 'description': 'Reserved, RES0.'}
         ]
         """
         fields_list = []
@@ -138,6 +138,9 @@ class SysRegParser:
                 rwtype = field.get('rwtype', 'UNKNOWN')
                 field_name = rwtype
 
+            # Get field description from <field_description> elements
+            field_description = self._extract_field_description(field)
+
             # Get bit positions
             if field_msb_elem is not None and field_lsb_elem is not None:
                 try:
@@ -150,7 +153,8 @@ class SysRegParser:
                         'msb': msb,
                         'lsb': lsb,
                         'width': width,
-                        'position': f'[{msb}:{lsb}]'
+                        'position': f'[{msb}:{lsb}]',
+                        'description': field_description
                     })
                 except (ValueError, AttributeError):
                     # Skip fields with invalid bit positions
@@ -160,6 +164,48 @@ class SysRegParser:
         fields_list.sort(key=lambda x: x['msb'], reverse=True)
 
         return fields_list
+
+    def _extract_field_description(self, field_element) -> str:
+        """
+        Extract field description from <field_description> elements.
+        Concatenates all <para> text from all <field_description> elements.
+
+        Args:
+            field_element: The field XML element
+
+        Returns:
+            Concatenated description text, or None if no description found
+        """
+        descriptions = []
+
+        # Find all field_description elements
+        for desc_elem in field_element.findall('field_description'):
+            # Extract all <para> text within this field_description
+            for para in desc_elem.findall('.//para'):
+                # Get all text content from para element (including child elements)
+                para_text_parts = []
+
+                # Get the initial text
+                if para.text:
+                    para_text_parts.append(para.text.strip())
+
+                # Get text from child elements and their tails
+                for child in para:
+                    if child.text:
+                        para_text_parts.append(child.text.strip())
+                    if child.tail:
+                        para_text_parts.append(child.tail.strip())
+
+                # Join all parts and add to descriptions
+                full_text = ' '.join(part for part in para_text_parts if part)
+                if full_text:
+                    descriptions.append(full_text)
+
+        # Join all descriptions with space
+        if descriptions:
+            return ' '.join(descriptions)
+        else:
+            return None
 
     def _extract_features(self) -> Set[str]:
         """
@@ -271,6 +317,7 @@ class SysRegDatabase:
                 field_lsb INTEGER NOT NULL,
                 field_width INTEGER NOT NULL,
                 field_position VARCHAR NOT NULL,
+                field_description VARCHAR,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -374,7 +421,7 @@ class SysRegDatabase:
 
         Args:
             register_name: The register name
-            fields: List of field dictionaries with 'name', 'msb', 'lsb', 'width', 'position'
+            fields: List of field dictionaries with 'name', 'msb', 'lsb', 'width', 'position', 'description'
 
         Returns: Number of fields inserted
         """
@@ -390,15 +437,16 @@ class SysRegDatabase:
                 self.conn.execute("""
                     INSERT INTO aarch64_sysreg_fields (
                         register_name, field_name, field_msb, field_lsb,
-                        field_width, field_position
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        field_width, field_position, field_description
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, [
                     register_name,
                     field['name'],
                     field['msb'],
                     field['lsb'],
                     field['width'],
-                    field['position']
+                    field['position'],
+                    field.get('description')  # Use .get() to handle fields without description
                 ])
                 inserted_count += 1
             except Exception as e:

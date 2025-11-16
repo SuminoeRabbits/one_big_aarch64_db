@@ -231,22 +231,24 @@ This table stores detailed bit-field information for each register. One row per 
 | `field_lsb` | INTEGER | Least significant bit position (0-127) |
 | `field_width` | INTEGER | Field width in bits (msb - lsb + 1) |
 | `field_position` | VARCHAR | Bit position in [msb:lsb] format |
+| `field_description` | VARCHAR | Description of the field's purpose and behavior |
 | `created_at` | TIMESTAMP | Record creation timestamp |
 
 **Key Design Principles:**
 1. **One row per field**: Each bitfield in a register gets its own row
 2. **64-bit mapping**: All fields map to positions within a 64-bit (or 32-bit) register space
 3. **MSB ordering**: Fields are naturally ordered by MSB position (descending)
+4. **Field descriptions**: Extracted from `<field_description>` elements in ARM XML specifications
 
 **Example:**
 ```
-register_name | field_name | field_msb | field_lsb | field_width | field_position
---------------|------------|-----------|-----------|-------------|---------------
-ALLINT        | RES0       | 63        | 14        | 50          | [63:14]
-ALLINT        | ALLINT     | 13        | 13        | 1           | [13:13]
-ALLINT        | RES0       | 12        | 0         | 13          | [12:0]
-ACCDATA_EL1   | RES0       | 63        | 32        | 32          | [63:32]
-ACCDATA_EL1   | ACCDATA    | 31        | 0         | 32          | [31:0]
+register_name | field_name | field_msb | field_lsb | field_width | field_position | field_description
+--------------|------------|-----------|-----------|-------------|----------------|------------------
+ALLINT        | RES0       | 63        | 14        | 50          | [63:14]        | Reserved, RES0.
+ALLINT        | ALLINT     | 13        | 13        | 1           | [13:13]        | All interrupt mask...
+ALLINT        | RES0       | 12        | 0         | 13          | [12:0]         | Reserved, RES0.
+ACCDATA_EL1   | RES0       | 63        | 32        | 32          | [63:32]        | Reserved, RES0.
+ACCDATA_EL1   | ACCDATA    | 31        | 0         | 32          | [31:0]         | Accumulation data...
 ```
 
 ### Metadata Table: `metadata`
@@ -376,6 +378,86 @@ This creates `aarch64_sysreg_db.xlsx` with 3 sheets:
 - **`fields`** - Field details table (7,967 bit-field definitions)
 - **`registers_with_fields`** - Joined view for easy analysis
 
+### Query Register Information (Interactive Agent)
+
+Use the query agent to get information about specific registers and bit fields:
+
+```bash
+# Query a specific bit position in a register
+python3 query_register.py 'HCR_EL2[1]'
+
+# Query a bit range (can span multiple fields)
+python3 query_register.py 'HCR_EL2[31:8]'
+
+# Query all information about a register
+python3 query_register.py 'ALLINT'
+
+# Query another bit field
+python3 query_register.py 'ACCDATA_EL1[31]'
+```
+
+**Supported query formats:**
+- `REGISTER_NAME[bit]` - Query a single bit position (e.g., `HCR_EL2[1]`)
+- `REGISTER_NAME[high:low]` - Query a bit range (e.g., `HCR_EL2[31:8]`)
+- `REGISTER_NAME` - Query entire register information (e.g., `ALLINT`)
+
+**Example output for `HCR_EL2[1]`:**
+```
+================================================================================
+Register: HCR_EL2
+Bit Position: [1]
+================================================================================
+
+Field Name:     SWIO
+Field Position: [1:1]
+Field Width:    1 bits
+
+Explanation:
+  Bit 1 belongs to the 'SWIO' field,
+  which spans bits [1:1] (1 bits total).
+```
+
+**Example output for `HCR_EL2[31:8]` (bit range query):**
+```
+================================================================================
+Register: HCR_EL2
+Bit Range: [31:8] (24 bits)
+================================================================================
+
+This range spans 27 field(s):
+
+Bit Position    Field Name                     Width
+-------------------------------------------------------
+[31:31]         RW                               1 bits
+[31:31]         RAO/WI                           1 bits
+[30:30]         TRVM                             1 bits
+[29:29]         HCD                              1 bits
+[29:29]         RES0                             1 bits
+...
+```
+
+**Example output for `ALLINT`:**
+```
+================================================================================
+Register: ALLINT
+================================================================================
+
+Long Name:      All Interrupt Mask Bit
+Register Width: 64 bits
+Field Count:    3
+
+Purpose:
+  Allows access to the all interrupt mask bit.
+
+Bit Field Layout:
+
+Bit Position    Field Name                     Width
+-------------------------------------------------------
+[63:14]         RES0                            50 bits
+[13:13]         ALLINT                           1 bits
+[12:0]          RES0                            13 bits
+```
+
 ### Query Examples
 
 #### Register Queries
@@ -403,11 +485,12 @@ WHERE register_name = 'ACCDATA_EL1';
 #### Field Queries
 
 ```sql
--- View all fields for a specific register
+-- View all fields for a specific register (with descriptions)
 SELECT
     field_name,
     field_position,
-    field_width
+    field_width,
+    field_description
 FROM aarch64_sysreg_fields
 WHERE register_name = 'ALLINT'
 ORDER BY field_msb DESC;
@@ -427,14 +510,15 @@ GROUP BY register_name
 ORDER BY field_count DESC
 LIMIT 10;
 
--- Join registers and fields for complete view
+-- Join registers and fields for complete view (with descriptions)
 SELECT
     r.feature_name,
     r.register_name,
     r.long_name,
     f.field_name,
     f.field_position,
-    f.field_width
+    f.field_width,
+    f.field_description
 FROM aarch64_sysreg r
 JOIN aarch64_sysreg_fields f ON r.register_name = f.register_name
 WHERE r.register_name = 'ALLINT'
