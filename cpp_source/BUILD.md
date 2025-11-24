@@ -1,4 +1,4 @@
-# Building query_isa
+# Building query_isa, faster and portable aarch64 binary disassembler
 
 This guide assumes source generation and compilation may occur on different machines (e.g., x86-64 host for database generation, AArch64 target for compilation).
 
