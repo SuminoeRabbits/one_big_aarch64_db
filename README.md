@@ -61,23 +61,23 @@ For detailed information about the source specifications, see [source_202509/REA
 ## Table of Contents
 
 1. [Preface](#preface)
-2. [Getting Started](#getting-started) _(Coming soon)_
-3. [Database Schema](#database-schema) _(Coming soon)_
-4. [Usage Examples](#usage-examples) _(Coming soon)_
-5. [Contributing](#contributing) _(Coming soon)_
+2. [System Register Database](#system-register-database)
+3. [ISA Database](#isa-database)
 
 ---
 
-## Getting Started
+## System Register Database
 
-### Prerequisites
+### Getting Started
+
+#### Prerequisites
 
 - Python 3.8 or later
 - DuckDB Python module: `pip install duckdb`
 
-### Database Generation
+#### Database Generation
 
-#### Step 1: Download and Extract Source Specifications
+##### Step 1: Download and Extract Source Specifications
 
 Download the ARM A-profile System Register specifications from ARM Developer:
 
@@ -89,7 +89,7 @@ Download the ARM A-profile System Register specifications from ARM Developer:
 tar -xzf SysReg_xml_A_profile-2025-09_ASL1.tar.gz -C source_202509/
 ```
 
-#### Step 2: Generate the Database
+##### Step 2: Generate the Database
 
 Run the database generator script:
 
@@ -114,6 +114,7 @@ python gen_aarch64_sysreg_db.py
    - Always exclude `FEAT_AA32` (AArch32 field-level feature, not register-level)
    - If no `<reg_condition>` exists → mark as `NO_FEATURE`
 5. Generates `aarch64_sysreg_db.duckdb` with 684 rows (90 features, 646 registers)
+6. Automatically exports the database to `aarch64_sysreg_db.xlsx` (3 sheets: registers, fields, joined view)
 
 **Expected Output:**
 ```
@@ -128,11 +129,18 @@ Parsing AArch64 XML files and populating database...
   [   1] ACCDATA_EL1          -> FEAT_LS64_ACCDATA
   [   2] ACTLR_EL1            -> NO_FEATURE
   ...
+
+Exporting to /path/to/aarch64_sysreg_db.xlsx...
+  [1/3] Exporting 'registers' sheet...
+  [2/3] Exporting 'fields' sheet...
+  [3/3] Exporting 'registers_with_fields' sheet (joined view)...
+Export completed successfully!
+Done!
 ```
 
-### Querying the Database
+#### Querying the Database
 
-#### Using Query Agent (Recommended)
+##### Using Query Agent (Recommended)
 
 The `query_register.py` script provides a convenient command-line interface to query registers and fields:
 
@@ -251,7 +259,7 @@ AMCNTENSET0_EL0.RES0[63:16]
 AMCNTENSET1_EL0.RES0[63:16]
 ```
 
-#### Using DuckDB CLI
+##### Using DuckDB CLI
 
 ```bash
 # Open the database
@@ -278,7 +286,7 @@ SELECT feature_name FROM aarch64_sysreg
 WHERE register_name = 'ACCDATA_EL1';
 ```
 
-#### Using Python
+##### Using Python
 
 ```python
 import duckdb
@@ -298,9 +306,9 @@ for row in result:
 conn.close()
 ```
 
-## Database Schema
+### Database Schema
 
-### Main Table: `aarch64_sysreg`
+#### Main Table: `aarch64_sysreg`
 
 The primary table structure follows a feature-centric design:
 
@@ -337,7 +345,7 @@ FEAT_LS64_ACCDATA    | ACCDATA_EL1    | 2
 FEAT_NMI             | ALLINT         | 3
 ```
 
-### Field Details Table: `aarch64_sysreg_fields`
+#### Field Details Table: `aarch64_sysreg_fields`
 
 This table stores detailed bit-field information for each register. One row per field within a register.
 
@@ -374,7 +382,7 @@ ACCDATA_EL1   | RES0       | 63        | 32        | 32          | [63:32]      
 ACCDATA_EL1   | ACCDATA    | 31        | 0         | 32          | [31:0]         | Accumulation data...      | NULL
 ```
 
-### Metadata Table: `metadata`
+#### Metadata Table: `metadata`
 
 Stores database metadata:
 
@@ -390,9 +398,9 @@ Stores database metadata:
 - `architecture`: Target architecture (AArch64)
 - `source_directory`: Source XML directory path
 
-## Script Implementation Details
+### Script Implementation Details
 
-### gen_aarch64_sysreg_db.py
+#### gen_aarch64_sysreg_db.py
 
 **Core Logic:**
 
@@ -432,9 +440,9 @@ if not features:
 
 **File Pattern:** Only `AArch64-*.xml` files are processed (excludes `AArch32-*.xml`, `amu.*.xml`, etc.)
 
-## Usage Examples
+### Usage Examples
 
-### Generate Database with Docker
+#### Generate Database with Docker
 
 You can generate the database using Docker without installing Python or DuckDB locally (works on Windows, macOS, and Linux).
 
@@ -469,7 +477,7 @@ docker run --rm -v %cd%:/workspace -w /workspace python:3.11-slim bash -c "pip i
 - `aarch64_sysreg_db.duckdb` - The DuckDB database file
 - `aarch64_sysreg_db.xlsx` - Excel export of the database
 
-### Using DuckDB CLI with Docker
+#### Using DuckDB CLI with Docker
 
 If you don't have DuckDB CLI installed locally, you can use Docker to interact with the database:
 
@@ -489,19 +497,9 @@ docker run --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duc
   -c "COPY (SELECT * FROM aarch64_sysreg) TO '/data/aarch64_sysreg_db.xlsx' WITH (FORMAT GDAL, DRIVER 'XLSX')"
 ```
 
-### Export Database to Excel
 
-```bash
-# Run the export script to create Excel file with multiple sheets
-python3 export_to_excel.py
-```
 
-This creates `aarch64_sysreg_db.xlsx` with 3 sheets:
-- **`registers`** - Main register table (684 feature-register mappings)
-- **`fields`** - Field details table (7,967 bit-field definitions)
-- **`registers_with_fields`** - Joined view for easy analysis
-
-### Query Register Information (Interactive Agent)
+#### Query Register Information (Interactive Agent)
 
 Use the query agent to get information about specific registers and bit fields:
 
@@ -636,9 +634,9 @@ Bit Position    Field Name                     Width       Definition
 [12:0]          RES0                            13 bits     RES0
 ```
 
-### Query Examples
+#### Query Examples
 
-#### Register Queries
+##### Register Queries
 
 ```sql
 -- Count all feature-register pairs
@@ -660,7 +658,7 @@ SELECT feature_name FROM aarch64_sysreg
 WHERE register_name = 'ACCDATA_EL1';
 ```
 
-#### Field Queries
+##### Field Queries
 
 ```sql
 -- View all fields for a specific register (with descriptions and definitions)
@@ -738,9 +736,9 @@ GROUP BY field_definition
 ORDER BY count DESC;
 ```
 
-## Release Information
+### Release Information
 
-### Version 2025.11
+#### Version 2025.11
 
 **Release Date**: November 2025
 
@@ -763,3 +761,106 @@ ORDER BY count DESC;
 **Release Version**: 2025.11 | **Specification**: ARM 2025-09
 
 </div>
+
+---
+
+## ISA Database
+
+### Getting Started
+
+#### Prerequisites
+
+- Python 3.8 or later
+- DuckDB Python module: `pip install duckdb`
+
+#### Database Generation
+
+##### Step 1: Download and Extract Source Specifications
+
+Download the ARM A-profile ISA specifications from ARM Developer:
+
+```bash
+# Download ISA XML (2025-09 ASL1)
+# See source_202509/README.md for download links
+
+# Extract to source_202509/
+tar -xzf ISA_A64_xml_A_profile-2025-09_ASL1.tar.gz -C source_202509/
+```
+
+##### Step 2: Generate the Database
+
+Run the database generator script:
+
+```bash
+python gen_aarch64_isa_db.py
+```
+
+**What the script does:**
+1. Scans `source_202509/ISA_A64_xml_A_profile_FAT-2025-09_ASL1/` for `*.xml` files
+2. Parses each XML file to extract:
+   - Instruction details (Mnemonic, Title, Description, Class)
+   - Encoding variants (32-bit, 64-bit, etc.)
+   - Bit field layouts (sf, op, Rn, Rd, imm, etc.)
+3. Generates `aarch64_isa_db.duckdb` with ~2300 instructions and ~4600 encodings
+4. Exports data to `aarch64_isa_db.xlsx`
+
+### Database Schema
+
+The database contains three main tables: `aarch64_isa_instructions`, `aarch64_isa_encodings`, and `aarch64_isa_encoding_fields`.
+
+#### Table: `aarch64_isa_instructions`
+
+This table stores high-level information about each instruction.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `INTEGER` | Primary Key. Unique identifier for the instruction. |
+| `xml_filename` | `VARCHAR` | The name of the source XML file. |
+| `mnemonic` | `VARCHAR` | The instruction mnemonic (e.g., `ADD`). |
+| `title` | `VARCHAR` | The full title of the instruction (e.g., `ADD (immediate)`). |
+| `description` | `VARCHAR` | A brief description of the instruction's operation. |
+| `instr_class` | `VARCHAR` | The class of the instruction (e.g., `general`, `float`, `sve`). |
+| `isa` | `VARCHAR` | The Instruction Set Architecture (always `A64`). |
+| `feature_name` | `VARCHAR` | The feature(s) required for this instruction (e.g., `FEAT_SVE`, `AARCH64`). |
+| `exception_level` | `VARCHAR` | The Exception Level(s) where this instruction is available (default `ALL`). |
+| `docvars` | `JSON` | A JSON object containing all document variables from the source XML. |
+
+#### Table: `aarch64_isa_encodings`
+
+This table stores the specific encoding variants for each instruction, including the 32-bit field layout.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `INTEGER` | Primary Key. Unique identifier for the encoding. |
+| `instruction_id` | `INTEGER` | Foreign Key referencing `aarch64_isa_instructions.id`. |
+| `encoding_name` | `VARCHAR` | The internal name of the encoding (e.g., `ADD_32_addsub_imm`). |
+| `encoding_label` | `VARCHAR` | A human-readable label for the encoding (e.g., `32-bit`). |
+| `iclass_name` | `VARCHAR` | The instruction class name this encoding belongs to. |
+| `asm_template` | `VARCHAR` | The assembly syntax template (e.g., `ADD <Wd>, <Wn>, #<imm>`). |
+| `bitdiffs` | `VARCHAR` | A string describing the bit differences that distinguish this encoding. |
+| `bit_31` ... `bit_0` | `VARCHAR` | The 32 columns representing the instruction encoding from MSB to LSB. Values are '0', '1', or the field name (e.g., 'Rn'). |
+
+#### [REMOVED] Table: `aarch64_isa_encoding_fields`
+
+*This table has been removed in favor of the flattened `bit_31`...`bit_0` columns in `aarch64_isa_encodings`.*
+
+### Usage Examples
+
+#### Querying Instructions by Feature
+
+```sql
+-- Find all SVE instructions
+SELECT mnemonic, title, feature_name
+FROM aarch64_isa_instructions
+WHERE feature_name LIKE '%FEAT_SVE%';
+```
+
+#### Querying Encodings
+
+```sql
+-- Get encodings for a specific instruction
+SELECT e.encoding_name, e.asm_template
+FROM aarch64_isa_encodings e
+JOIN aarch64_isa_instructions i ON e.instruction_id = i.id
+WHERE i.mnemonic = 'ADD' AND i.title LIKE '%immediate%';
+```

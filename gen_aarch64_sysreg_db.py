@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-"""
-Generate AArch64 System Register Database from ARM XML Specifications
-
-This script parses the ARM A-profile System Register XML specifications
-(AArch64-*.xml files only) and creates a DuckDB database.
-
-Database Schema:
-- Column 1 (feature_name): ARM Architecture Feature (FEAT_*)
-- Column 2 (register_name): System Register Short Name (e.g., ACCDATA_EL1)
-- Additional columns: metadata from ARM XML specifications
-"""
-
 import os
 import sys
 import re
@@ -18,6 +5,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set
 import duckdb
+import pandas as pd
 
 # Check Python version (requires Python 3.9 or higher)
 if sys.version_info < (3, 9):
@@ -31,6 +19,8 @@ PROJECT_DIR = Path(os.getcwd()) / "source_202509" / "SysReg_xml_A_profile-2025-0
 # Output database name: aarch64_sysreg_db.duckdb
 DB_NAME = "aarch64_sysreg_db.duckdb"
 OUTPUT_DB = Path(os.getcwd()) / DB_NAME
+EXCEL_FILENAME = "aarch64_sysreg_db.xlsx"
+OUTPUT_EXCEL = Path(os.getcwd()) / EXCEL_FILENAME
 
 # Features to exclude (baseline features that should be ignored, except when they are the ONLY feature)
 # FEAT_AA32: AArch32 compatibility feature (should be extracted only from reg_condition, not fields_condition)
@@ -519,6 +509,67 @@ class SysRegDatabase:
         self.conn.close()
 
 
+def export_to_excel(db_path: Path, excel_path: Path):
+    """Export database to Excel with multiple sheets"""
+    
+    print(f"Exporting to {excel_path}...")
+    
+    if not db_path.exists():
+        print(f"ERROR: Database file not found: {db_path}")
+        return
+
+    conn = duckdb.connect(str(db_path))
+
+    try:
+        # Get statistics
+        reg_count = conn.execute("SELECT COUNT(*) FROM aarch64_sysreg").fetchone()[0]
+        field_count = conn.execute("SELECT COUNT(*) FROM aarch64_sysreg_fields").fetchone()[0]
+
+        with pd.ExcelWriter(str(excel_path), engine='openpyxl') as writer:
+            # Sheet 1: Main register table
+            print(f"  [1/3] Exporting 'registers' sheet ({reg_count} rows)...")
+            df_registers = conn.execute('SELECT * FROM aarch64_sysreg').df()
+            df_registers.to_excel(writer, sheet_name='registers', index=False)
+
+            # Sheet 2: Fields table
+            print(f"  [2/3] Exporting 'fields' sheet ({field_count} rows)...")
+            df_fields = conn.execute("""
+                SELECT
+                    "id", "register_name", "field_name", "field_msb", "field_lsb",
+                    "field_width", "field_position", "field_description", "field_definition", "created_at"
+                FROM aarch64_sysreg_fields
+            """).df()
+            df_fields.to_excel(writer, sheet_name='fields', index=False)
+
+            # Sheet 3: Joined view (register + fields)
+            print(f"  [3/3] Exporting 'registers_with_fields' sheet (joined view)...")
+            df_joined = conn.execute("""
+                SELECT
+                    r.feature_name,
+                    r.register_name,
+                    r.long_name,
+                    r.register_width,
+                    r.field_count,
+                    f."field_name",
+                    f."field_msb",
+                    f."field_lsb",
+                    f."field_width",
+                    f."field_position",
+                    f."field_definition"
+                FROM aarch64_sysreg r
+                LEFT JOIN aarch64_sysreg_fields f ON r.register_name = f."register_name"
+                ORDER BY r.register_name, f."field_msb" DESC
+            """).df()
+            df_joined.to_excel(writer, sheet_name='registers_with_fields', index=False)
+            
+        print("Export completed successfully!")
+        
+    except Exception as e:
+        print(f"ERROR exporting to Excel: {e}")
+    finally:
+        conn.close()
+
+
 def main():
     """Main entry point"""
     print("=" * 80)
@@ -534,6 +585,7 @@ def main():
 
     print(f"PROJECT_DIR: {PROJECT_DIR}")
     print(f"OUTPUT_DB:   {OUTPUT_DB}")
+    print(f"OUTPUT_EXCEL: {OUTPUT_EXCEL}")
     print()
 
     # Find all AArch64 XML files (AArch64-*.xml pattern)
@@ -653,15 +705,12 @@ def main():
     print(f"Database name:     {DB_NAME}")
     print(f"Database location: {OUTPUT_DB}")
     print()
-    print("Sample queries:")
-    print(f"  duckdb {DB_NAME}")
-    print("  SELECT COUNT(*) FROM aarch64_sysreg;")
-    print("  SELECT feature_name, register_name FROM aarch64_sysreg LIMIT 10;")
-    print("  SELECT * FROM aarch64_sysreg WHERE feature_name = 'FEAT_LS64_ACCDATA';")
-    print("  SELECT feature_name, COUNT(*) as cnt FROM aarch64_sysreg GROUP BY feature_name ORDER BY cnt DESC;")
-    print()
-
+    
     db.close()
+    
+    # Export to Excel
+    export_to_excel(OUTPUT_DB, OUTPUT_EXCEL)
+    
     print("Done!")
 
 
