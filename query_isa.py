@@ -9,6 +9,7 @@ Usage:
     query_isa.py --n <MNEMONIC>              # Show encoding pattern(s) for mnemonic
     query_isa.py --op <OPCODE>               # Decode opcode to mnemonic + operands
     query_isa.py --hint <PARTIAL_OPCODE>     # Find matching mnemonics for partial opcode
+    query_isa.py --f <FEAT>                  # List mnemonics for feature
     query_isa.py --help                      # Show this help message
 
 Examples:
@@ -20,6 +21,7 @@ Examples:
     query_isa.py --hint 0x91_00_XX_XX                            # Separators + don't care
     query_isa.py --hint 0x9x00xxxx                               # x = 4 don't care bits
     query_isa.py --hint 0b1001xxxx_0000xxxx_xxxxxxxx_xxxxxxxx    # x = 1 don't care bit
+    query_isa.py --f FEAT_SVE                                    # List mnemonics for FEAT_SVE
 
 Note on separator characters (optional):
     - '_' or ':' can be used as 8-bit separators for readability
@@ -457,6 +459,68 @@ def query_by_hint(conn, partial_opcode_str):
     for match in matches:
         print(match['asm_template'])
 
+def query_by_feature(conn, feature_names):
+    """
+    Find all mnemonics that belong to specific features.
+    --f option implementation
+    Supports multiple features and JSON output for 'ALL'
+    """
+    import json
+
+    # Handle 'ALL' special case - output JSON with all features
+    if len(feature_names) == 1 and feature_names[0].upper() == 'ALL':
+        query = """
+            SELECT feature_name, mnemonic
+            FROM aarch64_isa_instructions
+            ORDER BY feature_name, mnemonic
+        """
+        results = conn.execute(query).fetchall()
+
+        # Build JSON structure: {feature: [mnemonics]}
+        features_dict = {}
+        for row in results:
+            feature = row[0]
+            mnemonic = row[1]
+            if feature not in features_dict:
+                features_dict[feature] = []
+            if mnemonic not in features_dict[feature]:
+                features_dict[feature].append(mnemonic)
+
+        # Output as JSON
+        print(json.dumps(features_dict, indent=2))
+        return
+
+    # Handle single or multiple feature queries
+    all_mnemonics = set()
+
+    for feature_name in feature_names:
+        # Query all unique mnemonics for the given feature
+        query = """
+            SELECT DISTINCT mnemonic
+            FROM aarch64_isa_instructions
+            WHERE feature_name LIKE ?
+            ORDER BY mnemonic
+        """
+
+        # Support both exact match and wildcard search
+        if '%' in feature_name or '_' in feature_name:
+            search_pattern = feature_name
+        else:
+            search_pattern = f'%{feature_name}%'
+
+        results = conn.execute(query, [search_pattern]).fetchall()
+
+        for row in results:
+            all_mnemonics.add(row[0])
+
+    if not all_mnemonics:
+        print(f"No instructions found for features: {', '.join(feature_names)}")
+        return
+
+    # Output mnemonics (one per line, sorted)
+    for mnemonic in sorted(all_mnemonics):
+        print(mnemonic)
+
 def main():
     parser = argparse.ArgumentParser(
         description='AArch64 ISA Database Query Tool',
@@ -471,6 +535,8 @@ Examples:
   %(prog)s --hint 0x91_00_XX_XX                    # Separators work with don't care
   %(prog)s --hint 0x9x00xxxx                       # x in hex = 4 don't care bits
   %(prog)s --hint 0b1001xxxx_0000xxxx_xxxxxxxx_xxxxxxxx
+  %(prog)s --f FEAT_SVE                            # List mnemonics for FEAT_SVE
+  %(prog)s --f FEAT_SVE2                           # List mnemonics for FEAT_SVE2
 
 Separator characters (optional, for readability):
   '_' or ':' can be used as 8-bit separators in hex and binary formats
@@ -490,6 +556,8 @@ Don't care notation:
                       help='Decode opcode to mnemonic + operands (format: 0xHEX or 0bBINARY)')
     group.add_argument('--hint', metavar='PARTIAL_OPCODE',
                       help='Find matching mnemonics for partial opcode (use X/x for don\'t care)')
+    group.add_argument('--f', metavar='FEAT', action='append', dest='features',
+                      help='List all mnemonics for features (can be specified multiple times; use "ALL" for JSON output)')
 
     args = parser.parse_args()
 
@@ -502,6 +570,8 @@ Don't care notation:
             query_by_opcode(conn, args.op)
         elif args.hint:
             query_by_hint(conn, args.hint)
+        elif args.features:
+            query_by_feature(conn, args.features)
     finally:
         conn.close()
 
