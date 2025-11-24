@@ -2,6 +2,9 @@
 
 This guide assumes source generation and compilation may occur on different machines (e.g., x86-64 host for database generation, AArch64 target for compilation).
 
+## Why you need query_isa?
+A query_isa is native C++ implemenaiton of `python3 ./query_isa.py --op`, which is faster, portable on various machine, and easy to call from other native applications without python/duckdb support.
+
 ## Step 1: Generate Encoding Data (on host with database)
 
 Generate the encoding source files from the database:
