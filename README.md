@@ -61,46 +61,83 @@ For detailed information about the source specifications, see [source_202509/REA
 ## Table of Contents
 
 1. [Preface](#preface)
-2. [System Register Database](#system-register-database)
-3. [ISA Database](#isa-database)
+2. [Getting Started](#getting-started)
+3. [System Register Database](#system-register-database)
+4. [ISA Database](#isa-database)
+5. [Common Operations](#common-operations)
 
 ---
 
-## System Register Database
+## Getting Started
 
-### Getting Started
+### Prerequisites
 
-#### Prerequisites
+- **Python**: 3.8 or later
+- **Required Python modules**:
+  - `duckdb>=0.8.0,<2.0.0`
+  - `pandas>=1.3.0,<3.0.0`
+  - `openpyxl>=3.0.9,<4.0.0`
 
-- Python 3.8 or later
-- DuckDB Python module: `pip install duckdb`
+### Installation & Setup
 
-#### Database Generation
+#### Step 1: Download and Extract Source Specifications
 
-##### Step 1: Download and Extract Source Specifications
-
-Download the ARM A-profile System Register specifications from ARM Developer:
+Download the ARM A-profile specifications from ARM Developer:
 
 ```bash
-# Download SysReg XML (2025-09 ASL1)
+# Download SysReg XML (2025-09 ASL1) for System Register Database
+# Download ISA_A64 XML (2025-09 ASL1) for ISA Database
 # See source_202509/README.md for download links
 
 # Extract to source_202509/
 tar -xzf SysReg_xml_A_profile-2025-09_ASL1.tar.gz -C source_202509/
+tar -xzf ISA_A64_xml_A_profile-2025-09_ASL1.tar.gz -C source_202509/
 ```
 
-##### Step 2: Generate the Database
+#### Step 2: Set Up Python Environment
 
-Run the database generator script:
+Create a virtual environment and install dependencies:
 
 ```bash
+# Create requirements.txt
 cat << EOF > requirements.txt
 duckdb>=0.8.0,<2.0.0
 pandas>=1.3.0,<3.0.0
 openpyxl>=3.0.9,<4.0.0
 EOF
+
+# Set up virtual environment
 python -m venv myenv && source myenv/bin/activate && pip install --upgrade pip && \
 pip install -r requirements.txt
+```
+
+#### Step 3: Generate Databases
+
+```bash
+# Generate System Register Database
+python gen_aarch64_sysreg_db.py
+
+# Generate ISA Database
+python gen_aarch64_isa_db.py
+```
+
+---
+
+## System Register Database
+
+### Overview
+
+The System Register Database (`aarch64_sysreg_db.duckdb`) provides comprehensive reference data for AArch64 system registers, including:
+- 684 feature-register mappings
+- 90 unique ARM architecture features (FEAT_*)
+- 646 unique system registers
+- Detailed bit-field information for each register
+
+### Database Generation
+
+Run the database generator script:
+
+```bash
 python gen_aarch64_sysreg_db.py
 ```
 
@@ -116,31 +153,7 @@ python gen_aarch64_sysreg_db.py
 5. Generates `aarch64_sysreg_db.duckdb` with 684 rows (90 features, 646 registers)
 6. Automatically exports the database to `aarch64_sysreg_db.xlsx` (3 sheets: registers, fields, joined view)
 
-**Expected Output:**
-```
-================================================================================
-AArch64 System Register Database Generator
-================================================================================
-
-Found XXX AArch64-*.xml files
-
-Parsing AArch64 XML files and populating database...
-
-  [   1] ACCDATA_EL1          -> FEAT_LS64_ACCDATA
-  [   2] ACTLR_EL1            -> NO_FEATURE
-  ...
-
-Exporting to /path/to/aarch64_sysreg_db.xlsx...
-  [1/3] Exporting 'registers' sheet...
-  [2/3] Exporting 'fields' sheet...
-  [3/3] Exporting 'registers_with_fields' sheet (joined view)...
-Export completed successfully!
-Done!
-```
-
-#### Querying the Database
-
-##### Using Query Agent (Recommended)
+### Using Query Agent (Recommended)
 
 The `query_register.py` script provides a convenient command-line interface to query registers and fields:
 
@@ -259,52 +272,7 @@ AMCNTENSET0_EL0.RES0[63:16]
 AMCNTENSET1_EL0.RES0[63:16]
 ```
 
-##### Using DuckDB CLI
-
-```bash
-# Open the database
-duckdb aarch64_sysreg_db.duckdb
-
-# Count all entries
-SELECT COUNT(*) FROM aarch64_sysreg;
-
-# View feature-register pairs
-SELECT feature_name, register_name FROM aarch64_sysreg LIMIT 10;
-
-# Find all registers for a specific feature
-SELECT register_name FROM aarch64_sysreg
-WHERE feature_name = 'FEAT_LS64_ACCDATA';
-
-# Count registers per feature
-SELECT feature_name, COUNT(*) as register_count
-FROM aarch64_sysreg
-GROUP BY feature_name
-ORDER BY register_count DESC;
-
-# Find all features required by a specific register
-SELECT feature_name FROM aarch64_sysreg
-WHERE register_name = 'ACCDATA_EL1';
-```
-
-##### Using Python
-
-```python
-import duckdb
-
-conn = duckdb.connect('aarch64_sysreg_db.duckdb')
-
-# Query all registers for a feature
-result = conn.execute("""
-    SELECT feature_name, register_name, long_name
-    FROM aarch64_sysreg
-    WHERE feature_name LIKE 'FEAT_SVE%'
-""").fetchall()
-
-for row in result:
-    print(f"{row[0]:25s} {row[1]:20s} {row[2]}")
-
-conn.close()
-```
+For more query examples and usage with DuckDB CLI or Python API, see the [Common Operations](#common-operations) section.
 
 ### Database Schema
 
@@ -440,302 +408,6 @@ if not features:
 
 **File Pattern:** Only `AArch64-*.xml` files are processed (excludes `AArch32-*.xml`, `amu.*.xml`, etc.)
 
-### Usage Examples
-
-#### Generate Database with Docker
-
-You can generate the database using Docker without installing Python or DuckDB locally (works on Windows, macOS, and Linux).
-
-**Prerequisites:**
-- Download and extract source specifications as described in [Step 1: Download and Extract Source Specifications](#step-1-download-and-extract-source-specifications)
-- The source files (`source_202509/`) will be shared with the Docker container via volume mount
-
-```bash
-# Pull Python 3 Docker image
-docker pull python:3.11-slim
-
-# Run the database generation script inside Docker
-# The current directory is mounted to /workspace in the container
-docker run --rm -v $(pwd):/workspace -w /workspace python:3.11-slim bash -c "
-  pip install --quiet duckdb pandas openpyxl lxml &&
-  python gen_aarch64_sysreg_db.py
-"
-
-# For Windows PowerShell, use:
-docker run --rm -v ${PWD}:/workspace -w /workspace python:3.11-slim bash -c "pip install --quiet duckdb pandas openpyxl lxml && python gen_aarch64_sysreg_db.py"
-
-# For Windows CMD, use:
-docker run --rm -v %cd%:/workspace -w /workspace python:3.11-slim bash -c "pip install --quiet duckdb pandas openpyxl lxml && python gen_aarch64_sysreg_db.py"
-```
-
-**How it works:**
-- `-v $(pwd):/workspace` mounts your current directory (containing `source_202509/`, `gen_aarch64_sysreg_db.py`) to `/workspace` inside the Docker container
-- The script reads XML files from the shared `source_202509/` directory
-- Generated database files are written back to your host directory
-
-**This will create:**
-- `aarch64_sysreg_db.duckdb` - The DuckDB database file
-- `aarch64_sysreg_db.xlsx` - Excel export of the database
-
-#### Using DuckDB CLI with Docker
-
-If you don't have DuckDB CLI installed locally, you can use Docker to interact with the database:
-
-```bash
-# Pull official DuckDB Docker image
-docker pull duckdb/duckdb:latest
-
-# Interactive SQL shell
-docker run -it --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duckdb
-
-# Run a single query
-docker run --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duckdb \
-  -c "SELECT COUNT(*) as total_rows FROM aarch64_sysreg"
-
-# Export to Excel using Docker
-docker run --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duckdb \
-  -c "COPY (SELECT * FROM aarch64_sysreg) TO '/data/aarch64_sysreg_db.xlsx' WITH (FORMAT GDAL, DRIVER 'XLSX')"
-```
-
-
-
-#### Query Register Information (Interactive Agent)
-
-Use the query agent to get information about specific registers and bit fields:
-
-```bash
-# Query a specific bit position in a register
-python3 query_register.py 'HCR_EL2[1]'
-
-# Query a bit range (can span multiple fields)
-python3 query_register.py 'HCR_EL2[31:8]'
-
-# Query by register and field name
-python3 query_register.py 'HCR_EL2.TGE'
-
-# Query by register and field name with bit range verification
-python3 query_register.py 'TRCIDR12.NUMCONDKEY[31:0]'
-
-# Query all information about a register
-python3 query_register.py 'ALLINT'
-
-# Query field across all registers
-python3 query_register.py 'NUMCONDKEY'
-python3 query_register.py 'AES'
-python3 query_register.py 'TGE'
-
-# Query all fields with specific field definition
-python3 query_register.py 'RES0'
-python3 query_register.py 'RES1'
-python3 query_register.py 'UNPREDICTABLE'
-```
-
-**Supported query formats:**
-- `REGISTER_NAME[bit]` - Query a single bit position (e.g., `HCR_EL2[1]`)
-- `REGISTER_NAME[high:low]` - Query a bit range (e.g., `HCR_EL2[31:8]`)
-- `REGISTER_NAME.FIELD` - Query by field name (e.g., `HCR_EL2.TGE`)
-- `REGISTER_NAME.FIELD[range]` - Query with field verification (e.g., `TRCIDR12.NUMCONDKEY[31:0]`)
-- `REGISTER_NAME` - Query entire register information (e.g., `ALLINT`)
-- `FIELD_NAME` - Search field across all registers (e.g., `NUMCONDKEY`, `AES`, `TGE`)
-- `FIELD_DEFINITION` - Query all fields by definition (e.g., `RES0`, `RES1`, `UNPREDICTABLE`, `UNDEFINED`, `RAO`, `UNKNOWN`)
-
-**Example output for `HCR_EL2[1]`:**
-```
-================================================================================
-Register: HCR_EL2
-Bit Position: [1]
-================================================================================
-
-Long Name:      Hypervisor Configuration Register
-Register Width: 64 bits
-Features:       FEAT_AA64
-
-Field Name:     SWIO
-Field Position: [1:1]
-Field Width:    1 bits
-Field Definition: NULL
-
-Description:
-  Set/Way Invalidation Override. Causes EL1 execution of the data cache
-  invalidate by set/way instructions to perform a data cache clean and
-  invalidate by set/way...
-
-Explanation:
-  Bit 1 belongs to the 'SWIO' field,
-  which spans bits [1:1] (1 bits total).
-```
-
-**Example output for `HCR_EL2[31:8]` (bit range query):**
-```
-================================================================================
-Register: HCR_EL2
-Bit Range: [31:8] (24 bits)
-================================================================================
-
-Long Name:      Hypervisor Configuration Register
-Register Width: 64 bits
-Features:       FEAT_AA64
-
-This range spans 27 field(s):
-
-Bit Position    Field Name                     Width
--------------------------------------------------------
-[31:31]         RW                               1 bits
-[31:31]         RAO/WI                           1 bits
-[30:30]         TRVM                             1 bits
-[29:29]         HCD                              1 bits
-[29:29]         RES0                             1 bits
-...
-```
-
-**Example output for `HCR_EL2.TGE` (field name query):**
-```
-================================================================================
-Register: HCR_EL2
-Field Name: TGE
-================================================================================
-
-Long Name:      Hypervisor Configuration Register
-Register Width: 64 bits
-Features:       FEAT_AA64
-
-Field Name:     TGE
-Field Position: [27:27]
-Field Width:    1 bits
-Field Definition: NULL
-
-Description:
-  Trap General Exceptions, from EL0. HCR_EL2.TGE must not be cached in a TLB.
-
-Explanation:
-  The 'TGE' field is located at bits [27:27],
-  spanning 1 bits total in the HCR_EL2 register.
-```
-
-**Example output for `ALLINT`:**
-```
-================================================================================
-Register: ALLINT
-================================================================================
-
-Long Name:      All Interrupt Mask Bit
-Register Width: 64 bits
-Field Count:    3
-
-Purpose:
-  Allows access to the all interrupt mask bit.
-
-Bit Field Layout:
-
-Bit Position    Field Name                     Width       Definition
-------------------------------------------------------------------------
-[63:14]         RES0                            50 bits     RES0
-[13:13]         ALLINT                           1 bits     NULL
-[12:0]          RES0                            13 bits     RES0
-```
-
-#### Query Examples
-
-##### Register Queries
-
-```sql
--- Count all feature-register pairs
-SELECT COUNT(*) FROM aarch64_sysreg;
-
--- List all FEAT_AA64 baseline registers
-SELECT register_name, long_name FROM aarch64_sysreg
-WHERE feature_name = 'FEAT_AA64'
-ORDER BY register_name;
-
--- Count registers per feature
-SELECT feature_name, COUNT(*) as register_count
-FROM aarch64_sysreg
-GROUP BY feature_name
-ORDER BY register_count DESC;
-
--- Find all features required by a specific register
-SELECT feature_name FROM aarch64_sysreg
-WHERE register_name = 'ACCDATA_EL1';
-```
-
-##### Field Queries
-
-```sql
--- View all fields for a specific register (with descriptions and definitions)
-SELECT
-    field_name,
-    field_position,
-    field_width,
-    field_description,
-    field_definition
-FROM aarch64_sysreg_fields
-WHERE register_name = 'ALLINT'
-ORDER BY field_msb DESC;
-
--- Find all registers with a specific field name
-SELECT DISTINCT register_name
-FROM aarch64_sysreg_fields
-WHERE field_name = 'RES0'
-ORDER BY register_name;
-
--- Count fields per register
-SELECT
-    register_name,
-    COUNT(*) as field_count
-FROM aarch64_sysreg_fields
-GROUP BY register_name
-ORDER BY field_count DESC
-LIMIT 10;
-
--- Join registers and fields for complete view (with descriptions and definitions)
-SELECT
-    r.feature_name,
-    r.register_name,
-    r.long_name,
-    f.field_name,
-    f.field_position,
-    f.field_width,
-    f.field_description,
-    f.field_definition
-FROM aarch64_sysreg r
-JOIN aarch64_sysreg_fields f ON r.register_name = f.register_name
-WHERE r.register_name = 'ALLINT'
-ORDER BY f.field_msb DESC;
-
--- Find registers with specific bit field at a position
-SELECT DISTINCT register_name
-FROM aarch64_sysreg_fields
-WHERE field_msb >= 13 AND field_lsb <= 13
-ORDER BY register_name;
-
--- Most common field names
-SELECT
-    field_name,
-    COUNT(*) as occurrence_count
-FROM aarch64_sysreg_fields
-GROUP BY field_name
-ORDER BY occurrence_count DESC
-LIMIT 20;
-
--- Find all RES0 (Reserved, must be zero) fields
-SELECT
-    register_name,
-    field_name,
-    field_position,
-    field_width
-FROM aarch64_sysreg_fields
-WHERE field_definition = 'RES0'
-ORDER BY register_name, field_msb DESC;
-
--- Count field definitions across all registers
-SELECT
-    field_definition,
-    COUNT(*) as count
-FROM aarch64_sysreg_fields
-GROUP BY field_definition
-ORDER BY count DESC;
-```
-
 ### Release Information
 
 #### Version 2025.11
@@ -766,28 +438,15 @@ ORDER BY count DESC;
 
 ## ISA Database
 
-### Getting Started
+### Overview
 
-#### Prerequisites
+The ISA Database (`aarch64_isa_db.duckdb`) provides comprehensive reference data for AArch64 A64 instructions, including:
+- ~2300 unique instructions
+- ~4600 instruction encodings
+- Detailed bit field layouts for each encoding
+- Feature mappings (FEAT_*)
 
-- Python 3.8 or later
-- DuckDB Python module: `pip install duckdb`
-
-#### Database Generation
-
-##### Step 1: Download and Extract Source Specifications
-
-Download the ARM A-profile ISA specifications from ARM Developer:
-
-```bash
-# Download ISA XML (2025-09 ASL1)
-# See source_202509/README.md for download links
-
-# Extract to source_202509/
-tar -xzf ISA_A64_xml_A_profile-2025-09_ASL1.tar.gz -C source_202509/
-```
-
-##### Step 2: Generate the Database
+### Database Generation
 
 Run the database generator script:
 
@@ -803,6 +462,99 @@ python gen_aarch64_isa_db.py
    - Bit field layouts (sf, op, Rn, Rd, imm, etc.)
 3. Generates `aarch64_isa_db.duckdb` with ~2300 instructions and ~4600 encodings
 4. Exports data to `aarch64_isa_db.xlsx`
+
+### Using Query Agent (Recommended)
+
+The `query_isa.py` script provides a convenient command-line interface to query instructions and encodings:
+
+```bash
+# Query encoding pattern(s) for a mnemonic
+python3 query_isa.py --n ADD
+
+# Decode opcode to mnemonic and operands
+python3 query_isa.py --op 0x91000000
+python3 query_isa.py --op 0x91_00_00_00                              # With separators
+python3 query_isa.py --op 0b10010001_00000000_00000000_00000000
+
+# Find matching instructions for partial opcode (use X/x for don't care)
+python3 query_isa.py --hint 0x9100XXXX                               # X in hex = 4 don't care bits
+python3 query_isa.py --hint 0x91_00_XX_XX                            # With separators
+python3 query_isa.py --hint 0x9x00xxxx                               # x in hex = 4 don't care bits (same as X)
+python3 query_isa.py --hint 0b1001xxxx_0000xxxx_xxxxxxxx_xxxxxxxx    # x in binary = 1 don't care bit
+
+# Show help message
+python3 query_isa.py --help
+```
+
+**Supported Query Formats:**
+- `--n MNEMONIC` - Show encoding pattern(s) for mnemonic (e.g., `ADD`, `MOV`, `NOP`)
+- `--op OPCODE` - Decode opcode to mnemonic and operand values (format: `0xHEX` or `0bBINARY`)
+- `--hint PARTIAL_OPCODE` - Find matching instructions for partial opcode with `X`/`x` for don't care bits
+
+**Separator Characters (Optional):**
+- `_` or `:` can be used as 8-bit separators for better readability
+- Examples: `0x91_00_00_00`, `0x91:00:00:00`, `0b10010001_00000000_00000000_00000000`
+- Works with both hex and binary formats, and with don't care notation (e.g., `0x91_00_XX_XX`)
+- Separators are completely optional and ignored during parsing
+
+**Don't Care Notation for `--hint`:**
+- **Hex format**: `X` or `x` = 4 binary don't care bits (e.g., `0x9X00` = `1001XXXX00000000...`)
+- **Binary format**: `X` or `x` = 1 binary don't care bit (e.g., `0b1001xxxx` = `1001XXXX`)
+- Mixed usage is allowed (e.g., `0x9X0x`, `0x91_00_Xx_XX`)
+
+**Example Outputs:**
+
+```bash
+# Query by mnemonic
+$ python3 query_isa.py --n NOP
+================================================================================
+Mnemonic: NOP
+Title: NOP -- A64
+Features: AARCH64
+================================================================================
+
+[1] Encoding: NOP_HI_hints
+    Assembly: NOP
+    Binary Pattern:  1101 0101 0000 0011 0010 0000 0001 1111
+    Hex Pattern:     0xd503201f
+    Bit Fields:
+      [31:0] = 11010101000000110010000000011111 (all fixed bits)
+```
+
+```bash
+# Decode opcode
+$ python3 query_isa.py --op 0x91000000
+ADD x0, x0, #0x0
+MOV x0, x0
+
+$ python3 query_isa.py --op 0x910083e0
+ADD x0, sp, #0x20
+
+$ python3 query_isa.py --op 0xd503201f
+AUTIB1716
+PACIB1716
+PACIA1716
+AUTIA1716
+NOP
+HINT #0x0
+```
+
+```bash
+# Partial opcode matching
+$ python3 query_isa.py --hint 0x9100XXXX
+ADD  <Xd|SP>, <Xn|SP>, #<imm>{, <shift>}
+MOV  <Xd|SP>, <Xn|SP>
+
+$ python3 query_isa.py --hint 0xd503201f
+AUTIB1716
+PACIB1716
+PACIA1716
+AUTIA1716
+NOP
+HINT  #<imm>
+```
+
+For more query examples and usage with DuckDB CLI or Python API, see the [Common Operations](#common-operations) section.
 
 ### Database Schema
 
@@ -844,23 +596,178 @@ This table stores the specific encoding variants for each instruction, including
 
 *This table has been removed in favor of the flattened `bit_31`...`bit_0` columns in `aarch64_isa_encodings`.*
 
-### Usage Examples
+---
 
-#### Querying Instructions by Feature
+## Common Operations
+
+This section covers common operations that apply to both the System Register Database and ISA Database.
+
+### Using DuckDB CLI
+
+```bash
+# Open a database
+duckdb aarch64_sysreg_db.duckdb
+# or
+duckdb aarch64_isa_db.duckdb
+
+# Example queries for System Register Database
+SELECT COUNT(*) FROM aarch64_sysreg;
+SELECT feature_name, register_name FROM aarch64_sysreg LIMIT 10;
+
+# Example queries for ISA Database
+SELECT COUNT(*) FROM aarch64_isa_instructions;
+SELECT mnemonic, title FROM aarch64_isa_instructions LIMIT 10;
+```
+
+### Using Python API
+
+```python
+import duckdb
+
+# Connect to System Register Database
+conn = duckdb.connect('aarch64_sysreg_db.duckdb')
+result = conn.execute("""
+    SELECT feature_name, register_name, long_name
+    FROM aarch64_sysreg
+    WHERE feature_name LIKE 'FEAT_SVE%'
+""").fetchall()
+for row in result:
+    print(f"{row[0]:25s} {row[1]:20s} {row[2]}")
+conn.close()
+
+# Connect to ISA Database
+conn = duckdb.connect('aarch64_isa_db.duckdb')
+result = conn.execute("""
+    SELECT mnemonic, title, feature_name
+    FROM aarch64_isa_instructions
+    WHERE feature_name LIKE '%FEAT_SVE%'
+    LIMIT 10
+""").fetchall()
+for row in result:
+    print(f"{row[0]:10s} {row[1]:40s} {row[2]}")
+conn.close()
+```
+
+### Using Docker
+
+You can use Docker for both database generation and querying without installing Python or DuckDB locally.
+
+#### Generate Databases with Docker
+
+```bash
+# Pull Python 3 Docker image
+docker pull python:3.11-slim
+
+# Generate System Register Database
+docker run --rm -v $(pwd):/workspace -w /workspace python:3.11-slim bash -c "
+  pip install --quiet duckdb pandas openpyxl lxml &&
+  python gen_aarch64_sysreg_db.py
+"
+
+# Generate ISA Database
+docker run --rm -v $(pwd):/workspace -w /workspace python:3.11-slim bash -c "
+  pip install --quiet duckdb pandas openpyxl lxml &&
+  python gen_aarch64_isa_db.py
+"
+
+# For Windows PowerShell, use ${PWD} instead of $(pwd)
+# For Windows CMD, use %cd% instead of $(pwd)
+```
+
+#### Query with DuckDB CLI via Docker
+
+```bash
+# Pull official DuckDB Docker image
+docker pull duckdb/duckdb:latest
+
+# Interactive SQL shell for System Register Database
+docker run -it --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duckdb
+
+# Interactive SQL shell for ISA Database
+docker run -it --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_isa_db.duckdb
+
+# Run a single query
+docker run --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_sysreg_db.duckdb \
+  -c "SELECT COUNT(*) as total_rows FROM aarch64_sysreg"
+
+docker run --rm -v $(pwd):/data duckdb/duckdb:latest /data/aarch64_isa_db.duckdb \
+  -c "SELECT COUNT(*) as total_instructions FROM aarch64_isa_instructions"
+```
+
+### Query Examples
+
+#### System Register Database Queries
+
+```sql
+-- Count all feature-register pairs
+SELECT COUNT(*) FROM aarch64_sysreg;
+
+-- List all FEAT_AA64 baseline registers
+SELECT register_name, long_name FROM aarch64_sysreg
+WHERE feature_name = 'FEAT_AA64'
+ORDER BY register_name;
+
+-- Count registers per feature
+SELECT feature_name, COUNT(*) as register_count
+FROM aarch64_sysreg
+GROUP BY feature_name
+ORDER BY register_count DESC;
+
+-- View all fields for a specific register
+SELECT
+    field_name,
+    field_position,
+    field_width,
+    field_description,
+    field_definition
+FROM aarch64_sysreg_fields
+WHERE register_name = 'ALLINT'
+ORDER BY field_msb DESC;
+
+-- Find all RES0 fields
+SELECT
+    register_name,
+    field_name,
+    field_position,
+    field_width
+FROM aarch64_sysreg_fields
+WHERE field_definition = 'RES0'
+ORDER BY register_name, field_msb DESC;
+```
+
+#### ISA Database Queries
 
 ```sql
 -- Find all SVE instructions
 SELECT mnemonic, title, feature_name
 FROM aarch64_isa_instructions
 WHERE feature_name LIKE '%FEAT_SVE%';
-```
 
-#### Querying Encodings
-
-```sql
 -- Get encodings for a specific instruction
 SELECT e.encoding_name, e.asm_template
 FROM aarch64_isa_encodings e
 JOIN aarch64_isa_instructions i ON e.instruction_id = i.id
 WHERE i.mnemonic = 'ADD' AND i.title LIKE '%immediate%';
+
+-- Count instructions per feature
+SELECT feature_name, COUNT(*) as instruction_count
+FROM aarch64_isa_instructions
+GROUP BY feature_name
+ORDER BY instruction_count DESC;
+```
+
+### Exporting to Excel
+
+Both databases automatically export to Excel format during generation:
+- `aarch64_sysreg_db.xlsx` - System Register Database
+- `aarch64_isa_db.xlsx` - ISA Database
+
+You can also export manually using DuckDB:
+
+```bash
+duckdb aarch64_sysreg_db.duckdb \
+  -c "COPY (SELECT * FROM aarch64_sysreg) TO 'output.xlsx' WITH (FORMAT GDAL, DRIVER 'XLSX')"
+
+duckdb aarch64_isa_db.duckdb \
+  -c "COPY (SELECT * FROM aarch64_isa_instructions) TO 'output.xlsx' WITH (FORMAT GDAL, DRIVER 'XLSX')"
 ```
