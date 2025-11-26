@@ -155,43 +155,49 @@ python gen_aarch64_sysreg_db.py
 
 ### Using Query Agent (Recommended)
 
-The `query_register.py` script provides a convenient command-line interface to query registers and fields:
+The `query_register.py` script provides a convenient command-line interface to query registers and fields. The CLI now uses explicit options instead of a single positional argument:
+
+- `--reg <REG>` (or `-r`): Register-style queries. Accepts the same formats as before: `HCR_EL2[1]`, `HCR_EL2[31:8]`, `HCR_EL2.TGE`, or `HCR_EL2`.
+- `--name <FIELD_NAME>` (or `-n`): Show all registers that contain the specified field name.
+- `--fielddef <DEF>` (or `-f`): Find fields by definition. Allowed values: `RES0`, `RES1`, `UNPREDICTABLE`, `UNDEFINED`, `RAO`, `UNKNOWN`.
+- `--json`: Optional flag to output results in JSON format for any of the above options.
+ - `--feat <FEAT_NAME>` (or `-F`): Show register names that belong to the given architecture feature (e.g., `FEAT_AA64`, `FEAT_SVE`). If you pass `LIST` it prints all `FEAT_*` names registered in the database.
+
+Examples:
 
 ```bash
-# Query a specific bit position
-python3 query_register.py 'HCR_EL2[1]'
+# Single bit query
+python3 query_register.py --reg 'HCR_EL2[1]'
 
-# Query a bit range
-python3 query_register.py 'HCR_EL2[31:8]'
+# Bit range query
+python3 query_register.py --reg 'HCR_EL2[31:8]'
 
-# Query by register and field name
-python3 query_register.py 'HCR_EL2.TGE'
+# Register + field query
+python3 query_register.py --reg 'HCR_EL2.TGE'
 
-# Query by register and field name with bit range verification
-python3 query_register.py 'TRCIDR12.NUMCONDKEY[31:0]'
+# Entire register
+python3 query_register.py --reg 'ACCDATA_EL1'
 
-# Query entire register information
-python3 query_register.py 'ACCDATA_EL1'
+# Find registers containing a field named 'TGE'
+python3 query_register.py --name TGE
 
-# Query field across all registers (finds all registers containing this field)
-python3 query_register.py 'NUMCONDKEY'
-python3 query_register.py 'AES'
-python3 query_register.py 'TGE'
+# Find all RES0 fields (text output)
+python3 query_register.py --fielddef RES0
 
-# Query all fields with specific field definition
-python3 query_register.py 'RES0'
-python3 query_register.py 'RES1'
-python3 query_register.py 'UNPREDICTABLE'
+# Find all RES0 fields and get JSON output
+python3 query_register.py --fielddef RES0 --json
 ```
 
-**Supported Query Formats:**
+Supported query formats for `--reg`:
 - `REGISTER_NAME[bit]` - Query specific bit position (e.g., `HCR_EL2[1]`)
 - `REGISTER_NAME[high:low]` - Query bit range (e.g., `HCR_EL2[31:8]`)
 - `REGISTER_NAME.FIELD` - Query by field name (e.g., `HCR_EL2.TGE`)
 - `REGISTER_NAME.FIELD[range]` - Query with field verification (e.g., `TRCIDR12.NUMCONDKEY[31:0]`)
 - `REGISTER_NAME` - Query entire register (e.g., `ALLINT`)
-- `FIELD_NAME` - Search field across all registers (e.g., `NUMCONDKEY`, `AES`)
-- `FIELD_DEFINITION` - Query all fields by definition (e.g., `RES0`, `RES1`, `UNPREDICTABLE`, `UNDEFINED`, `RAO`, `UNKNOWN`)
+
+The `--name` option searches for a field name across all registers (e.g., `NUMCONDKEY`, `AES`).
+
+The `--fielddef` option searches for fields with a specific field definition value (one of `RES0`, `RES1`, `UNPREDICTABLE`, `UNDEFINED`, `RAO`, `UNKNOWN`) and prints matches in `REGISTER_NAME.FIELD[POSITION]` format (or JSON when `--json` is used).
 
 **Example Outputs:**
 

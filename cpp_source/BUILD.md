@@ -65,9 +65,25 @@ cd build
 ctest
 ```
 
+## Building query_register
+
+Similar to query_isa, query_register also uses pre-generated data:
+
+```bash
+cd cpp_source
+python3 gen_register_data.py
+```
+
+**Generated files:**
+- `register_data.h` - Header with structure definitions
+- `register_data.cpp` - Main combined database file
+- `register_data_0.cpp` through `register_data_4.cpp` - Split register data (5 files for parallel compilation)
+
+Then build with the same process as query_isa above. Both binaries will be installed.
+
 ## Usage
 
-After building, the `query_isa` binary will be installed to the parent directory:
+After building, both binaries will be installed to the parent directory:
 
 ```bash
 # Decode opcode to ARM assembly
@@ -80,9 +96,15 @@ After building, the `query_isa` binary will be installed to the parent directory
 
 # Show help
 ./query_isa --help
+
+# Query register information
+./query_register --reg HCR_EL2
+./query_register --reg "HCR_EL2.TGE"
+./query_register --reg "HCR_EL2[27]"
+./query_register --reg "RES0" --json
 ```
 
-**Example output:**
+**Example output (query_isa):**
 
 ```bash
 $ ./query_isa --op 0x91000000
@@ -99,6 +121,20 @@ PACIA1716
 AUTIA1716
 NOP
 HINT #0x0
+```
+
+**Example output (query_register):**
+
+```bash
+$ ./query_register --reg "HCR_EL2.TGE"
+Register: HCR_EL2
+Field Name: TGE
+Field Position: [27:27]
+
+$ ./query_register --reg "HCR_EL2[1]"
+Register: HCR_EL2
+Bit Position: [1]
+Field Name: SWIO
 ```
 
 ## Clean

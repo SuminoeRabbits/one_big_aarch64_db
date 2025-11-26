@@ -291,8 +291,31 @@ std::string build_assembly(const std::string& asm_template, uint32_t opcode, con
     return ss.str();
 }
 
-void query_by_opcode(uint32_t opcode) {
-    bool found = false;
+// Escape string for JSON output
+std::string escape_json(const std::string& s) {
+    std::ostringstream o;
+    for (char c : s) {
+        switch (c) {
+            case '"': o << "\\\""; break;
+            case '\\': o << "\\\\"; break;
+            case '\b': o << "\\b"; break;
+            case '\f': o << "\\f"; break;
+            case '\n': o << "\\n"; break;
+            case '\r': o << "\\r"; break;
+            case '\t': o << "\\t"; break;
+            default:
+                if ((unsigned char)c < 0x20) {
+                    o << "\\u" << std::hex << std::setw(4) << std::setfill('0') << (int)c;
+                } else {
+                    o << c;
+                }
+        }
+    }
+    return o.str();
+}
+
+void query_by_opcode(uint32_t opcode, bool json_out = false) {
+    std::vector<std::string> matches;
 
     // Search through all encoding arrays
     const EncodingPattern* encoding_arrays[] = {
@@ -314,30 +337,50 @@ void query_by_opcode(uint32_t opcode) {
             // Check if opcode matches this encoding
             if ((opcode & enc.fixed_mask) == enc.fixed_bits) {
                 std::string assembly = build_assembly(enc.asm_template, opcode, enc.bit_fields);
-                std::cout << assembly << std::endl;
-                found = true;
+                matches.push_back(assembly);
             }
         }
     }
 
-    if (!found) {
-        std::cerr << "No matching instruction found for opcode: 0x"
-                  << std::hex << std::setw(8) << std::setfill('0') << opcode << std::endl;
+    if (json_out) {
+        // JSON output
+        std::cout << "{";
+        std::cout << "\"opcode\":\"0x" << std::hex << std::setw(8) << std::setfill('0') << opcode << "\",";
+        std::cout << "\"instructions\":[";
+        for (size_t i = 0; i < matches.size(); ++i) {
+            if (i > 0) {
+                std::cout << ",";
+            }
+            std::cout << "\"" << escape_json(matches[i]) << "\"";
+        }
+        std::cout << "]}" << std::endl;
+    } else {
+        // Normal output
+        for (const auto& match : matches) {
+            std::cout << match << std::endl;
+        }
+
+        if (matches.empty()) {
+            std::cerr << "No matching instruction found for opcode: 0x"
+                      << std::hex << std::setw(8) << std::setfill('0') << opcode << std::endl;
+        }
     }
 }
 
 void print_usage() {
-    std::cout << "Usage: query_isa --op <OPCODE>" << std::endl;
+    std::cout << "Usage: query_isa --op <OPCODE> [--json]" << std::endl;
     std::cout << std::endl;
     std::cout << "Decode AArch64 instruction opcode to ARM Assembler notation" << std::endl;
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  --op <OPCODE>    Decode opcode (format: 0xHEX or 0bBINARY)" << std::endl;
+    std::cout << "  --json           Output in JSON format" << std::endl;
     std::cout << "  --help           Show this help message" << std::endl;
     std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
     std::cout << "  query_isa --op 0x91000000" << std::endl;
     std::cout << "  query_isa --op 0x91_00_00_00              # With separators" << std::endl;
+    std::cout << "  query_isa --op 0xd503201f --json          # JSON output" << std::endl;
     std::cout << "  query_isa --op 0b10010001000000000000000000000000" << std::endl;
     std::cout << std::endl;
     std::cout << "Separator characters (optional):" << std::endl;
@@ -365,7 +408,16 @@ int main(int argc, char* argv[]) {
 
         std::string opcode_str = argv[2];
         uint32_t opcode = parse_opcode(opcode_str);
-        query_by_opcode(opcode);
+
+        // Check for --json flag
+        bool json_out = false;
+        for (int i = 3; i < argc; i++) {
+            if (std::string(argv[i]) == "--json") {
+                json_out = true;
+            }
+        }
+
+        query_by_opcode(opcode, json_out);
         return 0;
     }
 

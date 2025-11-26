@@ -15,6 +15,8 @@ Examples:
 
 import sys
 import re
+import json
+import argparse
 from pathlib import Path
 import duckdb
 
@@ -516,6 +518,33 @@ class RegisterQueryAgent:
             ]
         }
 
+    def query_registers_by_feature(self, feature_name: str):
+        """
+        Query register names by architecture feature.
+
+        If feature_name == 'LIST' (case-insensitive), returns a list of all
+        feature names registered in the database. Otherwise returns a list of
+        register names that belong to the given feature.
+        """
+        if feature_name is None:
+            return []
+
+        if feature_name.strip().upper() == 'LIST':
+            rows = self.conn.execute("""
+                SELECT DISTINCT feature_name
+                FROM aarch64_sysreg
+                ORDER BY feature_name
+            """).fetchall()
+            return [r[0] for r in rows]
+
+        rows = self.conn.execute("""
+            SELECT DISTINCT register_name
+            FROM aarch64_sysreg
+            WHERE feature_name = ?
+            ORDER BY register_name
+        """, [feature_name]).fetchall()
+        return [r[0] for r in rows]
+
     def format_bit_field_answer(self, info: dict) -> str:
         """Format answer for a bit field query or field name query"""
         output = []
@@ -921,27 +950,189 @@ class RegisterQueryAgent:
 
 def main():
     """Main entry point"""
-    if len(sys.argv) < 2:
-        print("Usage: python3 query_register.py <query>")
-        print()
-        print("Examples:")
-        print("  python3 query_register.py 'HCR_EL2[1]'       # Single bit")
-        print("  python3 query_register.py 'HCR_EL2[31:8]'    # Bit range")
-        print("  python3 query_register.py 'HCR_EL2.TGE'      # Field name")
-        print("  python3 query_register.py 'ALLINT[13]'       # Single bit")
-        print("  python3 query_register.py 'ACCDATA_EL1'      # Entire register")
-        print("  python3 query_register.py 'NUMCONDKEY'       # Field across all registers")
-        print("  python3 query_register.py 'RES0'             # All RES0 fields")
-        print()
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Query AArch64 system registers and fields")
 
-    query = sys.argv[1]
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--reg', '-r', metavar='REG', help="Register query. Accepts formats like 'HCR_EL2[1]', 'HCR_EL2[31:8]', 'HCR_EL2.TGE', or 'HCR_EL2'")
+    group.add_argument('--name', '-n', metavar='FIELD_NAME', help="Search for registers containing the given field name")
+    group.add_argument('--fielddef', '-f', metavar='FIELD_DEF', help="Search for fields by definition. One of: RES0, RES1, UNPREDICTABLE, UNDEFINED, RAO, UNKNOWN")
+    group.add_argument('--feat', '-F', metavar='FEAT_NAME', help="Search for registers by feature name, or use 'LIST' to list all features in the DB")
+
+    parser.add_argument('--json', action='store_true', help='Output results in JSON format')
+
+    args = parser.parse_args()
 
     try:
         agent = RegisterQueryAgent(DB_FILE)
-        answer = agent.answer_query(query)
-        print(answer)
-        agent.close()
+
+        # Handle --reg
+        if args.reg:
+            parsed = agent.parse_query(args.reg)
+            if not parsed:
+                print(f"Error: Invalid query format: '{args.reg}'")
+                sys.exit(1)
+
+            # If parse_query returned a field_definition (e.g., RES0), handle it
+            if parsed.get('field_definition') is not None:
+                info = agent.query_by_field_definition(parsed['field_definition'])
+                if args.json:
+                    print(json.dumps(info, indent=2))
+                else:
+                    print(agent.format_field_definition_answer(info))
+                agent.close()
+                return
+
+            register_name = parsed['register']
+            bit_start = parsed['bit_start']
+            bit_end = parsed['bit_end']
+            field_name = parsed.get('field_name')
+            verify_field = parsed.get('verify_field')
+            field_only = parsed.get('field_only', False)
+
+            # Field-name-only across registers
+            if field_only and field_name is not None:
+                field_infos = agent.query_all_fields_by_name(field_name)
+                if args.json:
+                    print(json.dumps(field_infos, indent=2))
+                else:
+                    print(agent.format_multiple_fields_answer(field_infos))
+                agent.close()
+                return
+
+            # Field name with register (e.g., REG.FIELD)
+            if field_name is not None and register_name is not None:
+                info = agent.query_field_by_name(register_name, field_name)
+                if args.json:
+                    print(json.dumps(info if info else {}, indent=2))
+                else:
+                    if info:
+                        print(agent.format_bit_field_answer(info))
+                    else:
+                        print(f"Error: Field '{field_name}' not found in register '{register_name}'")
+                agent.close()
+                return
+
+            # Bit position / range
+            if bit_start is not None:
+                # Verify field if requested
+                if verify_field is not None:
+                    field_info = agent.query_field_by_name(register_name, verify_field, bit_start, bit_end)
+                    if not field_info:
+                        any_field = agent.query_field_by_name(register_name, verify_field)
+                        if any_field:
+                            msg = {
+                                'error': 'field_mismatch',
+                                'message': f"Field '{verify_field}' exists but not at bit range [{bit_end}:{bit_start}]",
+                                'actual_position': any_field['field_position'],
+                                'treat_as': f"{register_name}[{bit_end}:{bit_start}]"
+                            }
+                            if args.json:
+                                print(json.dumps(msg, indent=2))
+                            else:
+                                print(msg['message'])
+                                print(f"Actual position of '{verify_field}': {any_field['field_position']}")
+                                print(f"Processing query as: {register_name}[{bit_end}:{bit_start}]")
+                            agent.close()
+                            return
+                        else:
+                            err = f"Error: Field '{verify_field}' not found in register '{register_name}'"
+                            if args.json:
+                                print(json.dumps({'error': 'field_not_found', 'message': err}, indent=2))
+                            else:
+                                print(err)
+                            agent.close()
+                            return
+
+                if bit_start == bit_end:
+                    info = agent.query_bit_field(register_name, bit_start)
+                    if args.json:
+                        print(json.dumps(info if info else {}, indent=2))
+                    else:
+                        if info:
+                            print(agent.format_bit_field_answer(info))
+                        else:
+                            print(f"Error: No field found for bit [{bit_start}] in register '{register_name}'")
+                    agent.close()
+                    return
+                else:
+                    info = agent.query_bit_range(register_name, bit_start, bit_end)
+                    if args.json:
+                        print(json.dumps(info if info else {}, indent=2))
+                    else:
+                        if info:
+                            print(agent.format_bit_range_answer(info))
+                        else:
+                            print(f"Error: No fields found for bit range [{bit_end}:{bit_start}] in register '{register_name}'")
+                    agent.close()
+                    return
+
+            # Entire register
+            info = agent.query_register(register_name)
+            if args.json:
+                print(json.dumps(info if info else {}, indent=2))
+            else:
+                if info:
+                    print(agent.format_register_answer(info))
+                else:
+                    print(f"Error: Register '{register_name}' not found in database.")
+            agent.close()
+            return
+
+        # Handle --name (search field across registers)
+        if args.name:
+            field_infos = agent.query_all_fields_by_name(args.name)
+            if args.json:
+                print(json.dumps(field_infos, indent=2))
+            else:
+                print(agent.format_multiple_fields_answer(field_infos))
+            agent.close()
+            return
+
+        # Handle --feat (feature -> register list or LIST -> feature list)
+        if args.feat:
+            feat_val = args.feat.strip()
+            results = agent.query_registers_by_feature(feat_val)
+            if args.json:
+                print(json.dumps(results, indent=2))
+            else:
+                if results:
+                    print("\n".join(results))
+                else:
+                    if feat_val.upper() == 'LIST':
+                        print("No features found in database.")
+                    else:
+                        print(f"No registers found for feature '{feat_val}'")
+            agent.close()
+            return
+
+        # Handle --fielddef
+        if args.fielddef:
+            # Be tolerant of accidental merging of tokens (e.g. non-ASCII space causing
+            # "RES0　--json" to be passed as a single argument). Extract the first token
+            # as the field definition, and enable JSON output if `--json` appears inside.
+            raw_fd = args.fielddef
+            if '--json' in raw_fd:
+                args.json = True
+                raw_fd = raw_fd.replace('--json', ' ')
+
+            # Split on any whitespace (including Unicode spaces) and take the first token
+            parts = re.split(r"\s+", raw_fd.strip())
+            fd = parts[0] if parts and parts[0] else ''
+
+            allowed = {'RES0', 'RES1', 'UNPREDICTABLE', 'UNDEFINED', 'RAO', 'UNKNOWN'}
+            if fd not in allowed:
+                print(f"Error: --fielddef must be one of: {', '.join(sorted(allowed))}")
+                agent.close()
+                sys.exit(1)
+
+            info = agent.query_by_field_definition(fd)
+            if args.json:
+                print(json.dumps(info, indent=2))
+            else:
+                print(agent.format_field_definition_answer(info))
+            agent.close()
+            return
+
     except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)

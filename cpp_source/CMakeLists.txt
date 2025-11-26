@@ -47,6 +47,35 @@ add_dependencies(query_isa generate_encoding_data)
 # Install target
 install(TARGETS query_isa DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# query_register (v2 - uses pre-generated static data, no DuckDB dependency)
+set(REGISTER_DATA_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/register_data.h")
+set(REGISTER_DATA_SOURCES "")
+list(APPEND REGISTER_DATA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/register_data.cpp")
+foreach(i RANGE 0 4)
+    list(APPEND REGISTER_DATA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/register_data_${i}.cpp")
+endforeach()
+
+# Custom command to generate register data files
+add_custom_command(
+    OUTPUT ${REGISTER_DATA_HEADER} ${REGISTER_DATA_SOURCES}
+    COMMAND ${PYTHON_EXECUTABLE} gen_register_data.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPENDS gen_register_data.py
+    COMMENT "Generating register data files..."
+)
+
+# Register query executable
+add_executable(query_register
+    query_register.cpp
+    ${REGISTER_DATA_SOURCES}
+)
+
+# Ensure header is generated before compiling
+add_custom_target(generate_register_data DEPENDS ${REGISTER_DATA_HEADER} ${REGISTER_DATA_SOURCES})
+add_dependencies(query_register generate_register_data)
+
+install(TARGETS query_register DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
 # Test target
 enable_testing()
 add_test(NAME test_0x91000000 COMMAND query_isa --op 0x91000000)
