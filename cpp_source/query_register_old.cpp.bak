@@ -1,0 +1,320 @@
+/*
+ * AArch64 Register Query Tool - C++ Implementation
+ *
+ * Provides a fast --reg equivalent to `python3 query_register.py --reg <REG>`
+ * Requires DuckDB C++ library (duckdb.hpp / libduckdb).
+ */
+
+#include <iostream>
+#include <string>
+#include <regex>
+#include <vector>
+#include <sstream>
+#include <algorithm>
+#include <set>
+#include <duckdb.hpp>
+
+using namespace duckdb;
+
+static const std::set<std::string> ALLOWED_DEFS = {"RES0","RES1","UNPREDICTABLE","UNDEFINED","RAO","UNKNOWN"};
+
+static std::string escape_json(const std::string &s) {
+    std::ostringstream o;
+    for (auto c : s) {
+        switch (c) {
+            case '"': o << "\\\""; break;
+            case '\\': o << "\\\\"; break;
+            case '\b': o << "\\b"; break;
+            case '\f': o << "\\f"; break;
+            case '\n': o << "\\n"; break;
+            case '\r': o << "\\r"; break;
+            case '\t': o << "\\t"; break;
+            default:
+                if ((unsigned char)c < 0x20) {
+                    o << "\\u" << std::hex << (int)c;
+                } else {
+                    o << c;
+                }
+        }
+    }
+    return o.str();
+}
+
+int run_fielddef_query(Connection &conn, const std::string &def, bool json_out) {
+    auto res = conn.Query("SELECT register_name, field_name, field_position FROM aarch64_sysreg_fields WHERE field_definition = ? ORDER BY register_name, field_msb DESC", Value(def));
+    if (res->HasError()) {
+        std::cerr << "Query failed: " << res->GetError() << std::endl;
+        return 1;
+    }
+
+    if (json_out) {
+        std::cout << "[";
+        bool first = true;
+        while (res->Next()) {
+            if (!first) std::cout << ",\n";
+            first = false;
+            std::string rn = res->GetValue(0).ToString();
+            std::string fn = res->GetValue(1).ToString();
+            std::string pos = res->GetValue(2).ToString();
+            std::cout << "{\"register_name\":\"" << escape_json(rn) << "\",\"field_name\":\"" << escape_json(fn) << "\",\"field_position\":\"" << escape_json(pos) << "\"}";
+        }
+        std::cout << "]\n";
+    } else {
+        while (res->Next()) {
+            std::string rn = res->GetValue(0).ToString();
+            std::string fn = res->GetValue(1).ToString();
+            std::string pos = res->GetValue(2).ToString();
+            std::cout << rn << "." << fn << pos << std::endl;
+        }
+    }
+    return 0;
+}
+
+int run_register_query(Connection &conn, const std::string &query, bool json_out) {
+    // Try to parse similar patterns as Python version
+    std::string q = query;
+    // Trim
+    q.erase(q.begin(), std::find_if(q.begin(), q.end(), [](int ch) { return !std::isspace(ch); }));
+    q.erase(std::find_if(q.rbegin(), q.rend(), [](int ch) { return !std::isspace(ch); }).base(), q.end());
+
+    // Field definition only
+    if (ALLOWED_DEFS.count(q)) {
+        return run_fielddef_query(conn, q, json_out);
+    }
+
+    // Patterns
+    std::regex dot_bracket(R"(^([A-Z0-9_<>]+)\.([A-Z0-9_]+)\[(\d+)(?::(\d+))?\]$)");
+    std::regex dot_only(R"(^([A-Z0-9_<>]+)\.([A-Z0-9_]+)$)");
+    std::regex bracket(R"(^([A-Z0-9_<>]+)(?:\[(\d+)(?::(\d+))?\])?$)");
+    std::smatch m;
+
+    if (std::regex_match(q, m, dot_bracket)) {
+        std::string reg = m[1];
+        std::string field = m[2];
+        int high = std::stoi(m[3]);
+        int low = m[4].matched ? std::stoi(m[4]) : high;
+        int start = std::min(high, low);
+        int end = std::max(high, low);
+
+        // Verify field exists at that range
+        auto res = conn.Query("SELECT register_name, field_name, field_msb, field_lsb, field_position, field_description, field_definition FROM aarch64_sysreg_fields WHERE register_name = ? AND field_name = ? ORDER BY field_msb DESC", Value(reg), Value(field));
+        if (res->HasError()) { std::cerr << res->GetError() << std::endl; return 1; }
+        bool matched = false;
+        while (res->Next()) {
+            int msb = std::stoi(res->GetValue(2).ToString());
+            int lsb = std::stoi(res->GetValue(3).ToString());
+            if (msb == end && lsb == start) {
+                matched = true;
+                if (json_out) {
+                    std::cout << "{";
+                    std::cout << "\"register_name\":\"" << escape_json(reg) << "\",";
+                    std::cout << "\"field_name\":\"" << escape_json(field) << "\",";
+                    std::cout << "\"field_position\":\"" << escape_json(res->GetValue(4).ToString()) << "\",";
+                    std::cout << "\"field_definition\":\"" << escape_json(res->GetValue(6).ToString()) << "\"}" << std::endl;
+                } else {
+                    std::cout << "Register: " << reg << std::endl;
+                    std::cout << "Field Name: " << field << std::endl;
+                    std::cout << "Field Position: " << res->GetValue(4).ToString() << std::endl;
+                }
+                break;
+            }
+        }
+        if (!matched) {
+            std::cerr << "Error: Field '" << field << "' exists but not at bit range [" << end << ":" << start << "] or not found." << std::endl;
+            return 1;
+        }
+        return 0;
+    }
+
+    if (std::regex_match(q, m, dot_only)) {
+        std::string reg = m[1];
+        std::string field = m[2];
+        // Query specific field in register (take highest MSB)
+        auto res = conn.Query("SELECT register_name, field_name, field_msb, field_lsb, field_position, field_description, field_definition FROM aarch64_sysreg_fields WHERE register_name = ? AND field_name = ? ORDER BY field_msb DESC LIMIT 1", Value(reg), Value(field));
+        if (res->HasError()) { std::cerr << res->GetError() << std::endl; return 1; }
+        if (res->RowCount() == 0) {
+            std::cerr << "Error: Field '" << field << "' not found in register '" << reg << "'" << std::endl;
+            return 1;
+        }
+        res->Next();
+        if (json_out) {
+            std::cout << "{";
+            std::cout << "\"register_name\":\"" << escape_json(reg) << "\",";
+            std::cout << "\"field_name\":\"" << escape_json(field) << "\",";
+            std::cout << "\"field_position\":\"" << escape_json(res->GetValue(4).ToString()) << "\"}" << std::endl;
+        } else {
+            std::cout << "Register: " << reg << std::endl;
+            std::cout << "Field Name: " << field << std::endl;
+            std::cout << "Field Position: " << res->GetValue(4).ToString() << std::endl;
+        }
+        return 0;
+    }
+
+    if (std::regex_match(q, m, bracket)) {
+        std::string reg = m[1];
+        if (m[2].matched) {
+            int high = std::stoi(m[2]);
+            int low = m[3].matched ? std::stoi(m[3]) : high;
+            int start = std::min(high, low);
+            int end = std::max(high, low);
+
+            if (start == end) {
+                // single bit
+                auto res = conn.Query("SELECT register_name, field_name, field_msb, field_lsb, field_position, field_description, field_definition FROM aarch64_sysreg_fields WHERE register_name = ? AND field_msb >= ? AND field_lsb <= ? ORDER BY field_msb DESC LIMIT 1", Value(reg), Value(start), Value(start));
+                if (res->HasError()) { std::cerr << res->GetError() << std::endl; return 1; }
+                if (res->RowCount() == 0) {
+                    std::cerr << "Error: No field found for bit [" << start << "] in register '" << reg << "'" << std::endl;
+                    return 1;
+                }
+                res->Next();
+                if (json_out) {
+                    std::cout << "{";
+                    std::cout << "\"register_name\":\"" << escape_json(reg) << "\",";
+                    std::cout << "\"bit_position\":\"" << start << "\",";
+                    std::cout << "\"field_name\":\"" << escape_json(res->GetValue(1).ToString()) << "\",\"field_position\":\"" << escape_json(res->GetValue(4).ToString()) << "\"}" << std::endl;
+                } else {
+                    std::cout << "Register: " << reg << std::endl;
+                    std::cout << "Bit Position: [" << start << "]" << std::endl;
+                    std::cout << "Field Name: " << res->GetValue(1).ToString() << std::endl;
+                }
+                return 0;
+            } else {
+                // range
+                auto res = conn.Query("SELECT register_name, field_name, field_msb, field_lsb, field_position, field_description, field_definition FROM aarch64_sysreg_fields WHERE register_name = ? AND field_lsb <= ? AND field_msb >= ? ORDER BY field_msb DESC", Value(reg), Value(end), Value(start));
+                if (res->HasError()) { std::cerr << res->GetError() << std::endl; return 1; }
+                if (res->RowCount() == 0) {
+                    std::cerr << "Error: No fields found for bit range [" << end << ":" << start << "] in register '" << reg << "'" << std::endl;
+                    return 1;
+                }
+                if (json_out) {
+                    std::cout << "{";
+                    std::cout << "\"register_name\":\"" << escape_json(reg) << "\",";
+                    std::cout << "\"bit_start\":\"" << start << "\",";
+                    std::cout << "\"bit_end\":\"" << end << "\",";
+                    std::cout << "\"fields\": [";
+                    bool first = true;
+                    while (res->Next()) {
+                        if (!first) {
+                            std::cout << ",";
+                        }
+                        first = false;
+                        std::cout << "{\"name\":\"" << escape_json(res->GetValue(1).ToString()) << "\",\"position\":\"" << escape_json(res->GetValue(4).ToString()) << "\"}";
+                    }
+                    std::cout << "]}" << std::endl;
+                } else {
+                    std::cout << "Register: " << reg << std::endl;
+                    std::cout << "Bit Range: [" << end << ":" << start << "]" << std::endl;
+                    while (res->Next()) {
+                        std::cout << "  " << res->GetValue(4).ToString() << "  " << res->GetValue(1).ToString() << std::endl;
+                    }
+                }
+                return 0;
+            }
+        } else {
+            // entire register
+            auto meta_stmt = conn.Prepare("SELECT feature_name, long_name, register_width, reg_purpose FROM aarch64_sysreg WHERE register_name = ?");
+            if (!meta_stmt->success) { std::cerr << meta_stmt->error << std::endl; return 1; }
+            auto meta = meta_stmt->Execute(Value(reg));
+            if (!meta->success) { std::cerr << meta->error << std::endl; return 1; }
+            if (meta->RowCount() == 0) {
+                std::cerr << "Error: Register '" << reg << "' not found in database." << std::endl;
+                return 1;
+            }
+            std::vector<std::string> features;
+            while (meta->Next()) {
+                features.push_back(meta->GetValue(0).ToString());
+            }
+            auto fields_stmt = conn.Prepare("SELECT field_name, field_msb, field_lsb, field_width, field_position, field_description, field_definition FROM aarch64_sysreg_fields WHERE register_name = ? ORDER BY field_msb DESC");
+            if (!fields_stmt->success) { std::cerr << fields_stmt->error << std::endl; return 1; }
+            auto fields = fields_stmt->Execute(Value(reg));
+            if (!fields->success) { std::cerr << fields->error << std::endl; return 1; }
+
+            if (json_out) {
+                std::cout << "{";
+                std::cout << "\"register_name\":\"" << escape_json(reg) << "\",";
+                std::cout << "\"features\": [";
+                for (size_t i=0; i<features.size(); ++i) {
+                    if (i) {
+                        std::cout << ",";
+                    }
+                    std::cout << "\"" << escape_json(features[i]) << "\"";
+                }
+                std::cout << "],\"fields\": [";
+                bool first=false;
+                while (fields->Next()) {
+                    if (first) {
+                        std::cout << ",";
+                    }
+                    first=true;
+                    std::cout << "{\"name\":\""<<escape_json(fields->GetValue(0).ToString())<<"\",\"position\":\""<<escape_json(fields->GetValue(4).ToString())<<"\"}";
+                }
+                std::cout << "]}" << std::endl;
+            } else {
+                std::cout << "Register: " << reg << std::endl;
+                std::cout << "Features: ";
+                for (size_t i=0; i<features.size(); ++i) {
+                    if (i) {
+                        std::cout << ", ";
+                    }
+                    std::cout << features[i];
+                }
+                std::cout << std::endl;
+                std::cout << "Fields:\n";
+                while (fields->Next()) {
+                    std::cout << "  " << fields->GetValue(4).ToString() << "  " << fields->GetValue(0).ToString() << std::endl;
+                }
+            }
+            return 0;
+        }
+    }
+
+    std::cerr << "Error: Invalid query format: '" << query << "'" << std::endl;
+    return 1;
+}
+
+void print_usage() {
+    std::cout << "Usage: query_register --reg <REG> [--json]" << std::endl;
+    std::cout << "Examples:\n  query_register --reg 'HCR_EL2[1]'\n  query_register --reg 'HCR_EL2.TGE'\n";
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 3) { print_usage(); return 1; }
+    std::string arg1 = argv[1];
+    if (arg1 == "--help" || arg1 == "-h") { print_usage(); return 0; }
+    bool json_out = false;
+    std::string reg_query;
+    if (arg1 == "--reg" || arg1 == "-r") {
+        reg_query = argv[2];
+        // Check for --json in later args
+        for (int i=3;i<argc;i++) if (std::string(argv[i])=="--json") json_out = true;
+    } else {
+        print_usage(); return 1;
+    }
+
+    // DB path: assume working dir contains aarch64_sysreg_db.duckdb
+    std::string db_path = "aarch64_sysreg_db.duckdb";
+    try {
+        DuckDB db(nullptr);
+        Connection conn(db);
+        conn.Query("PRAGMA threads=4;");
+        // DuckDB opens file automatically via Connection when querying using full path below
+        // We'll set attachment by opening a connection to the file via calling Query on it
+        // Use full path in queries by prefixing with 'read' is not necessary; tables exist in the file opened automatically when using the file as database.
+
+        // Attach by opening another connection is not necessary; instead, open a new database instance backed by the file
+        // but duckdb.hpp doesn't provide direct open-from-file in this snippet; rely on SQL to read from file
+
+        // Prepare to run query
+        // Note: the connection is currently in-memory; to query the .duckdb file we create a new database backed by that file
+        // Recreate DuckDB with filename
+        DuckDB db_file(db_path);
+        Connection conn_file(db_file);
+        conn_file.Query("PRAGMA threads=4;");
+
+        int rc = run_register_query(conn_file, reg_query, json_out);
+        return rc;
+    } catch (std::exception &e) {
+        std::cerr << "Unexpected error: " << e.what() << std::endl;
+        return 1;
+    }
+}
