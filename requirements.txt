@@ -1,0 +1,7 @@
+# Python 3.9+ compatible dependencies
+# Tested with Python 3.9.20 and Python 3.10.12
+# DuckDB version range tested: 0.8.0 - 1.4.1
+
+duckdb>=0.8.0,<2.0.0
+pandas>=1.3.0,<3.0.0
+openpyxl>=3.0.9,<4.0.0
