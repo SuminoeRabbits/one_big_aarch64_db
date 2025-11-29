@@ -62,6 +62,12 @@ For detailed information about the source specifications, see [source_202509/REA
 
 1. [Preface](#preface)
 2. [Getting Started](#getting-started)
+   - [Prerequisites](#prerequisites)
+   - [Installation & Setup](#installation--setup)
+   - [Quick Start Summary](#quick-start-summary)
+   - [Makefile Commands Reference](#makefile-commands-reference)
+   - [Build Workflows](#build-workflows)
+   - [Troubleshooting](#troubleshooting)
 3. [System Register Database](#system-register-database)
 4. [ISA Database](#isa-database)
 5. [Common Operations](#common-operations)
@@ -73,6 +79,9 @@ For detailed information about the source specifications, see [source_202509/REA
 ### Prerequisites
 
 - **Python**: 3.8 or later
+- **CMake**: 3.10 or later
+- **C++ Compiler**: GCC or Clang
+- **Make**: GNU Make
 - **Required Python modules**:
   - `duckdb>=0.8.0,<2.0.0`
   - `pandas>=1.3.0,<3.0.0`
@@ -96,29 +105,145 @@ tar -xzf ISA_A64_xml_A_profile-2025-09_ASL1.tar.gz -C source_202509/
 
 #### Step 2: Set Up Python Environment
 
-Create a virtual environment and install dependencies:
+**Using Makefile (Recommended):**
 
 ```bash
-# Create requirements.txt
-cat << EOF > requirements.txt
-duckdb>=0.8.0,<2.0.0
-pandas>=1.3.0,<3.0.0
-openpyxl>=3.0.9,<4.0.0
-EOF
+make setup
+```
 
+This will create a Python virtual environment in `venv39/` and install all required packages.
+
+**Manual Setup:**
+
+```bash
+# Create requirements.txt (already provided)
 # Set up virtual environment
-python -m venv myenv && source myenv/bin/activate && pip install --upgrade pip && \
+python3 -m venv venv39
+source venv39/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-#### Step 3: Generate Databases
+#### Step 3: Build Everything
+
+**Using Makefile (Recommended):**
+
+```bash
+make all
+```
+
+This single command will:
+1. Generate `aarch64_sysreg_db.duckdb` from XML sources
+2. Generate `aarch64_isa_db.duckdb` from XML sources
+3. Build C++ query tools (`query_register`, `query_isa`)
+4. Install executables to the project root
+
+**Manual Build:**
+
+If you prefer to build manually:
 
 ```bash
 # Generate System Register Database
-python gen_aarch64_sysreg_db.py
+python3 gen_aarch64_sysreg_db.py
 
 # Generate ISA Database
-python gen_aarch64_isa_db.py
+python3 gen_aarch64_isa_db.py
+
+# Build C++ query tools
+cd cpp_source
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+make install
+cd ../..
+```
+
+### Quick Start Summary
+
+For first-time setup:
+```bash
+make setup  # Set up Python environment (first time only)
+make all    # Build everything
+```
+
+After running `make all`, you will have:
+- `aarch64_sysreg_db.duckdb` - System Register database
+- `aarch64_sysreg_db.xlsx` - Excel export of SysReg database
+- `aarch64_isa_db.duckdb` - ISA database
+- `aarch64_isa_db.xlsx` - Excel export of ISA database
+- `query_register` - Native query tool for system registers
+- `query_isa` - Native query tool for instructions
+
+### Makefile Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `make all` | Build databases + C++ tools + install (default) |
+| `make setup` | Set up Python virtual environment |
+| `make db` | Generate DuckDB databases only |
+| `make build` | Build C++ query tools only |
+| `make install` | Install executables to project root |
+| `make test` | Run tests |
+| `make clean` | Remove generated files and build artifacts |
+| `make clean-all` | Remove everything including venv |
+| `make help` | Show help message |
+
+**Parallel Build Options:**
+
+| Command | Description |
+|---------|-------------|
+| `make -j` | Use all CPU cores for parallel build |
+| `make -j4` | Use 4 parallel jobs |
+| `make -j$(nproc)` | Explicitly use all available cores |
+
+**Performance:**
+- Database generation: ~28% faster with parallel build (`make -j db`)
+- C++ compilation: Automatically uses all CPU cores (configured in Makefile)
+
+### Build Workflows
+
+**Incremental Builds:**
+
+The Makefile uses dependency tracking, so only modified files will be rebuilt:
+
+```bash
+# If you only modified Python scripts
+make db
+
+# If you only modified C++ code
+make build install
+```
+
+**Clean Rebuild:**
+
+```bash
+make clean
+make all
+```
+
+### Troubleshooting
+
+**Python Module Not Found:**
+```bash
+make setup
+# Or manually
+source venv39/bin/activate
+pip install -r requirements.txt
+```
+
+**CMake Not Found:**
+```bash
+# Ubuntu/Debian
+sudo apt-get install cmake
+
+# macOS
+brew install cmake
+```
+
+**Build Errors:**
+```bash
+make clean
+make all
 ```
 
 ---
@@ -153,15 +278,41 @@ python gen_aarch64_sysreg_db.py
 5. Generates `aarch64_sysreg_db.duckdb` with 684 rows (90 features, 646 registers)
 6. Automatically exports the database to `aarch64_sysreg_db.xlsx` (3 sheets: registers, fields, joined view)
 
-### Using Query Agent (Recommended)
+### Using Query Tools
 
-The `query_register.py` script provides a convenient command-line interface to query registers and fields. The CLI now uses explicit options instead of a single positional argument:
+After building with `make all`, you can use the native C++ query tools for fast querying:
 
-- `--reg <REG>` (or `-r`): Register-style queries. Accepts the same formats as before: `HCR_EL2[1]`, `HCR_EL2[31:8]`, `HCR_EL2.TGE`, or `HCR_EL2`.
+**Using Native Query Tool (Recommended):**
+
+```bash
+# Query a specific bit
+./query_register --reg 'HCR_EL2[1]'
+
+# Query a bit range
+./query_register --reg 'HCR_EL2[31:8]'
+
+# Query by register name and field
+./query_register --reg 'HCR_EL2.TGE'
+
+# Query entire register
+./query_register --reg 'ACCDATA_EL1'
+
+# Find all registers containing a field named 'TGE'
+./query_register --name TGE
+
+# Find all RES0 fields
+./query_register --fielddef RES0
+```
+
+**Using Python Script:**
+
+The `query_register.py` script provides a command-line interface with the same options:
+
+- `--reg <REG>` (or `-r`): Register-style queries. Accepts: `HCR_EL2[1]`, `HCR_EL2[31:8]`, `HCR_EL2.TGE`, or `HCR_EL2`.
 - `--name <FIELD_NAME>` (or `-n`): Show all registers that contain the specified field name.
 - `--fielddef <DEF>` (or `-f`): Find fields by definition. Allowed values: `RES0`, `RES1`, `UNPREDICTABLE`, `UNDEFINED`, `RAO`, `UNKNOWN`.
 - `--json`: Optional flag to output results in JSON format for any of the above options.
- - `--feat <FEAT_NAME>` (or `-F`): Show register names that belong to the given architecture feature (e.g., `FEAT_AA64`, `FEAT_SVE`). If you pass `LIST` it prints all `FEAT_*` names registered in the database.
+- `--feat <FEAT_NAME>` (or `-F`): Show register names that belong to the given architecture feature (e.g., `FEAT_AA64`, `FEAT_SVE`). If you pass `LIST` it prints all `FEAT_*` names registered in the database.
 
 Examples:
 
@@ -469,9 +620,26 @@ python gen_aarch64_isa_db.py
 3. Generates `aarch64_isa_db.duckdb` with ~2300 instructions and ~4600 encodings
 4. Exports data to `aarch64_isa_db.xlsx`
 
-### Using Query Agent (Recommended)
+### Using Query Tools
 
-The `query_isa.py` script provides a convenient command-line interface to query instructions and encodings:
+After building with `make all`, you can use the native C++ query tools for fast querying:
+
+**Using Native Query Tool (Recommended):**
+
+```bash
+# Decode an opcode
+./query_isa --op 0xd503201f
+
+# Query by mnemonic
+./query_isa --n NOP
+
+# Partial opcode matching (X = don't care)
+./query_isa --hint 0x9100XXXX
+```
+
+**Using Python Script:**
+
+The `query_isa.py` script provides a command-line interface to query instructions and encodings:
 
 ```bash
 # Query encoding pattern(s) for a mnemonic
