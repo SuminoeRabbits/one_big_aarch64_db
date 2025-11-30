@@ -169,8 +169,10 @@ make all    # Build everything
 After running `make all`, you will have:
 - `aarch64_sysreg_db.duckdb` - System Register database
 - `aarch64_sysreg_db.xlsx` - Excel export of SysReg database
+- `aarch64_sysreg_onebig.jsonl` - RAG-optimized JSONL for system registers
 - `aarch64_isa_db.duckdb` - ISA database
 - `aarch64_isa_db.xlsx` - Excel export of ISA database
+- `aarch64_isa_onebig.jsonl` - RAG-optimized JSONL for instructions
 - `query_register` - Native query tool for system registers
 - `query_isa` - Native query tool for instructions
 
@@ -178,9 +180,10 @@ After running `make all`, you will have:
 
 | Command | Description |
 |---------|-------------|
-| `make all` | Build databases + C++ tools + install (default) |
+| `make all` | Build databases + JSONL + C++ tools + install (default) |
 | `make setup` | Set up Python virtual environment |
 | `make db` | Generate DuckDB databases only |
+| `make json` | Generate RAG-optimized JSONL files from databases |
 | `make build` | Build C++ query tools only |
 | `make install` | Install executables to project root |
 | `make test` | Run tests |
@@ -199,6 +202,106 @@ After running `make all`, you will have:
 **Performance:**
 - Database generation: ~28% faster with parallel build (`make -j db`)
 - C++ compilation: Automatically uses all CPU cores (configured in Makefile)
+
+### RAG-Optimized JSONL Generation
+
+For integration with RAG (Retrieval Augmented Generation) systems, the project generates consolidated JSONL (JSON Lines) files optimized for LlamaIndex and other RAG frameworks.
+
+**Generated Files:**
+- `aarch64_sysreg_onebig.jsonl` (~2 MB) - All system registers with fields and descriptions
+- `aarch64_isa_onebig.jsonl` (~3 MB) - All instructions with encodings and bit patterns
+
+**JSONL Format:**
+
+Each line contains a complete JSON document with:
+- `id`: Unique MD5-based identifier
+- `text`: Complete semantic chunk (human-readable description)
+- `metadata`: Flat structure (no nesting) for vector DB compatibility
+
+**System Register JSONL includes:**
+```json
+{
+  "id": "unique_hash",
+  "text": "Register: TTBR0_EL1\nFull Name: Translation Table Base Register 0...",
+  "metadata": {
+    "register_name": "TTBR0_EL1",
+    "register_width": 64,
+    "long_name": "Translation Table Base Register 0 (EL1)",
+    "features": "FEAT_LPA, FEAT_LPA2",
+    "purpose": "Holds the base address of translation table...",
+    "field_count": 5,
+    "architecture": "AArch64",
+    "spec_version": "2025-09",
+    "doc_type": "system_register",
+    "has_fields": true
+  }
+}
+```
+
+**ISA JSONL includes:**
+```json
+{
+  "id": "unique_hash",
+  "text": "Instruction: ADD\nTitle: Add (immediate)...",
+  "metadata": {
+    "mnemonic": "ADD",
+    "title": "Add (immediate)",
+    "description": "Add immediate value to register",
+    "instr_class": "general",
+    "isa": "A64",
+    "feature_name": "AARCH64",
+    "exception_level": "ALL",
+    "encoding_count": 2,
+    "encoding_names": "ADD_32_addsub_imm, ADD_64_addsub_imm",
+    "architecture": "AArch64",
+    "spec_version": "2025-09",
+    "doc_type": "isa_instruction",
+    "has_encodings": true
+  }
+}
+```
+
+**Key Features:**
+- **Flat metadata**: No nested objects (required for Pinecone, Chroma, etc.)
+- **Semantic chunks**: Each document is a complete, answerable unit
+- **LlamaIndex compatible**: Direct integration with SimpleDirectoryReader
+- **One JSON per line**: Streaming-friendly format
+
+**Usage:**
+```bash
+# Generate JSONL files
+make json
+
+# Or generate as part of full build
+make all
+```
+
+**LlamaIndex Integration:**
+```python
+from llama_index.core import SimpleDirectoryReader
+
+# Load documents
+documents = SimpleDirectoryReader(
+    input_files=['aarch64_sysreg_onebig.jsonl']
+).load_data()
+
+# Build index
+from llama_index.core import VectorStoreIndex
+index = VectorStoreIndex.from_documents(documents)
+
+# Query
+query_engine = index.as_query_engine()
+response = query_engine.query("What is TTBR0_EL1?")
+```
+
+**Purpose:**
+These JSONL files are specifically designed for:
+- RAG systems for AI-assisted ARM architecture queries
+- Vector databases (Pinecone, Chroma, Weaviate)
+- LlamaIndex, LangChain, Haystack frameworks
+- Fine-tuning language models on ARM specifications
+- Creating custom documentation tools
+- Automated code generation and analysis
 
 ### Build Workflows
 

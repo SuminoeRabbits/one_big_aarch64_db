@@ -14,6 +14,10 @@ ISA_DB := aarch64_isa_db.duckdb
 SYSREG_XLSX := aarch64_sysreg_db.xlsx
 ISA_XLSX := aarch64_isa_db.xlsx
 
+# RAG-optimized JSONL files
+SYSREG_JSON := aarch64_sysreg_onebig.jsonl
+ISA_JSON := aarch64_isa_onebig.jsonl
+
 # Executables
 QUERY_REGISTER := query_register
 QUERY_ISA := query_isa
@@ -21,6 +25,8 @@ QUERY_ISA := query_isa
 # Python scripts
 GEN_SYSREG := gen_aarch64_sysreg_db.py
 GEN_ISA := gen_aarch64_isa_db.py
+GEN_SYSREG_JSON := gen_aarch64_sysreg_onebig.py
+GEN_ISA_JSON := gen_aarch64_isa_onebig.py
 
 # Number of parallel jobs (default to number of CPU cores)
 NPROC := $(shell nproc 2>/dev/null || echo 4)
@@ -29,10 +35,10 @@ NPROC := $(shell nproc 2>/dev/null || echo 4)
 # This allows database generation to run in parallel
 MAKEFLAGS += --output-sync=target
 
-.PHONY: all clean setup db build install help test
+.PHONY: all clean setup db build install help test json
 
 # Default target
-all: db build install
+all: db json build install
 
 # Help message
 help:
@@ -41,9 +47,10 @@ help:
 	@echo "Usage:"
 	@echo "  make setup     - Set up Python virtual environment (first time only)"
 	@echo "  make db        - Generate DuckDB databases from XML sources"
+	@echo "  make json      - Generate RAG-optimized JSONL files from databases"
 	@echo "  make build     - Build C++ query tools"
 	@echo "  make install   - Install executables to project root"
-	@echo "  make all       - Run db + build + install (default)"
+	@echo "  make all       - Run db + json + build + install (default)"
 	@echo "  make test      - Run tests"
 	@echo "  make clean     - Remove generated files and build artifacts"
 	@echo "  make clean-all - Remove everything including virtual environment"
@@ -76,6 +83,17 @@ $(ISA_DB): $(GEN_ISA)
 	@echo "==== Generating ISA Database ===="
 	$(PYTHON) $(GEN_ISA)
 
+# Generate RAG-optimized JSONL files
+json: $(SYSREG_JSON) $(ISA_JSON)
+
+$(SYSREG_JSON): $(SYSREG_DB) $(GEN_SYSREG_JSON)
+	@echo "==== Generating System Register OneBig JSONL ===="
+	$(PYTHON) $(GEN_SYSREG_JSON)
+
+$(ISA_JSON): $(ISA_DB) $(GEN_ISA_JSON)
+	@echo "==== Generating ISA OneBig JSONL ===="
+	$(PYTHON) $(GEN_ISA_JSON)
+
 # Build C++ tools
 build: $(BUILD_DIR)/Makefile
 	@echo "==== Building C++ query tools ===="
@@ -107,6 +125,7 @@ clean:
 	@echo "==== Cleaning generated files ===="
 	rm -f $(SYSREG_DB) $(ISA_DB)
 	rm -f $(SYSREG_XLSX) $(ISA_XLSX)
+	rm -f $(SYSREG_JSON) $(ISA_JSON)
 	rm -f $(QUERY_REGISTER) $(QUERY_ISA)
 	rm -rf $(BUILD_DIR)
 	rm -f $(CPP_SOURCE_DIR)/encoding_data*.cpp $(CPP_SOURCE_DIR)/encoding_data.h
